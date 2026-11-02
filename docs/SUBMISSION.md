@@ -2,7 +2,7 @@
 
 ## Current factual description
 
-BriefLock is a NEAR-oriented creative milestone payment workflow that binds a client-approved brief, an exact delivery-file hash, and one fixed creator account. The current prototype provides a local simulation of the guarded workflow: the browser hashes selected bytes, only the client role can approve the current version, approved work is frozen, and the payout rule derives its recipient and amount from locked commission terms. A deterministic rules-based assistant reports observable metadata without signing or redirecting funds. Attack Lab demonstrates blocked unauthorized approval, stale-version approval, post-approval replacement, invoice recipient redirection, payout replay, and release-before-approval attempts. The repository clearly labels simulation evidence; the NEAR Rust contract and sandbox suite are the next integration milestone.
+BriefLock is a NEAR creative milestone payment workflow that binds a client-approved brief, an exact delivery-file hash, and one fixed creator account. Its Rust `near-sdk` contract atomically funds immutable terms, lets only the original client approve the current version/hash, freezes approved work, and derives payout amount and recipient from stored state during asynchronous settlement. The React dashboard hashes actual selected bytes and uses Wallet Selector for explicit testnet signing when configured; it also has a credential-free simulation fallback. A deterministic rules-based assistant reports observable metadata without signing or redirecting funds. Attack Lab demonstrates blocked unauthorized approval, stale-version approval, post-approval replacement, invoice recipient redirection, payout replay, and release-before-approval attempts. Unit and `near-workspaces` sandbox tests cover the contract invariants. Testnet deployment and receipts are reported only when a user-controlled account is configured.
 
 ## Intended form values
 
@@ -12,7 +12,7 @@ BriefLock is a NEAR-oriented creative milestone payment workflow that binds a cl
 - Team size: human-provided, not inferred
 - Email: human-provided, not inferred for the form
 - Mainnet NEAR payout address: human-provided; never use a testnet account or invent one
-- Public repository: to be added after GitHub publication
+- Public repository: <https://github.com/sumitkumarraju/brieflock>
 - Demo post: human must publish the X post; this assistant does not post on the user’s behalf
 - Consent: must be explicitly confirmed before submitting
 

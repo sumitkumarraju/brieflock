@@ -2,7 +2,7 @@
 
 ## Current prototype boundary
 
-The current app is a local simulation with a domain layer that mirrors the intended contract semantics. `src/lib/commitment.ts` is deliberately pure and has no React or browser state dependency. `src/lib/demoState.ts` supplies owned fictional fixtures. `src/lib/attackLab.ts` invokes the same rules used by the UI and reports the execution layer.
+The app has two explicit adapters. The default is a local simulation with a domain layer that mirrors the contract semantics. When `VITE_NEAR_CONTRACT_ID` is set, `src/lib/near.ts` uses Wallet Selector for signing and `near-api-js` for read-only RPC state. `src/lib/commitment.ts` remains pure and has no React or wallet dependency. `src/lib/demoState.ts` supplies owned fictional fixtures. `src/lib/attackLab.ts` invokes the same local rules used by the UI and reports the execution layer.
 
 ```text
 selected bytes ──SHA-256──> reviewed file commitment
@@ -16,11 +16,11 @@ fixed amount + recipient ──────┘             │
 
 The UI may display a simulation receipt, but it never presents it as a NEAR transaction. Canonical status is held in the `Commission` domain object rather than a browser “paid” flag.
 
-## Intended NEAR boundary
+## Implemented NEAR boundary
 
 The next adapter will map these operations to a Rust contract:
 
-| Domain operation | Intended contract method |
+| Domain operation | Contract method |
 | --- | --- |
 | Fund immutable terms | `create_and_fund` |
 | Submit or replace bytes commitment | `submit_delivery` |
@@ -32,6 +32,8 @@ The next adapter will map these operations to a Rust contract:
 
 The contract must derive settlement destination and amount from stored terms. No model output, invoice field, or arbitrary caller argument may supply either value.
 
+The browser intentionally does not hold signing keys. Wallet Selector is configured with a method-limited access key request for operational methods; owner approval and cancellation still require the contract's one-yocto authorization check. The app refreshes canonical state after a returned receipt and never marks a payout paid solely because a wallet flow opened.
+
 ## State model
 
 ```text
@@ -42,7 +44,7 @@ FUNDED ──submit──> SUBMITTED ──approve──> APPROVED ──release
                            REFUNDED
 ```
 
-An approved delivery is frozen. A replacement increments the delivery version and invalidates any stale browser review. Release is terminal and can happen at most once.
+An approved delivery is frozen. A replacement increments the delivery version and invalidates any stale browser review. Release is terminal and can happen at most once. A pending payout/refund reserves the principal before scheduling the transfer; the private callback either finalizes the terminal state or restores the prior claimable state on a failed transfer.
 
 ## File integrity
 

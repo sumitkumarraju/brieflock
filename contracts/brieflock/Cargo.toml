@@ -1,0 +1,28 @@
+[package]
+name = "brieflock-contract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+borsh = { version = "1.8.1", features = ["derive"] }
+near-sdk = { version = "5.30.0", features = ["legacy"] }
+
+[dev-dependencies]
+anyhow = "1"
+near-sdk = { version = "5.30.0", features = ["legacy", "unit-testing"] }
+near-token = "0.3.6"
+near-workspaces = "0.24.0"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

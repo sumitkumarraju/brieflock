@@ -29,3 +29,13 @@ test("mobile layout has no horizontal overflow", async ({ page }) => {
   }));
   expect(widths.body).toBeLessThanOrEqual(widths.viewport);
 });
+
+test("creates a simulation commission and commits its first delivery", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New commission" }).click();
+  await expect(page.getByRole("heading", { name: "Fund a protected milestone." })).toBeVisible();
+  await page.getByRole("button", { name: "Create in simulation" }).click();
+  await expect(page.getByText("Submit the first delivery")).toBeVisible();
+  await page.getByRole("button", { name: "Submit delivery v1" }).click();
+  await expect(page.getByRole("main").getByText("Awaiting approval")).toBeVisible();
+});

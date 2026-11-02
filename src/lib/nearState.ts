@@ -1,0 +1,115 @@
+import type { Commission, CommissionStatus, DeliveryCommitment } from "../types";
+
+export interface NearMilestoneView {
+  milestone_id: string;
+  schema_version: number;
+  terms_version: number;
+  client_id: string;
+  creator_id: string;
+  amount_yocto: string;
+  brief_hash: string;
+  created_at_ns: string;
+  submit_by_ns: string;
+  review_until_ns: string;
+  status:
+    | "Funded"
+    | "Submitted"
+    | "Approved"
+    | "PayoutPending"
+    | "RefundPending"
+    | "Paid"
+    | "Refunded";
+  delivery_version: string | null;
+  delivery_hash: string | null;
+  submitted_at_ns: string | null;
+  approved_version: string | null;
+  approved_hash: string | null;
+  approved_at_ns: string | null;
+  pending_attempt_id: string | null;
+  pending_kind: "Payout" | "Refund" | null;
+  pending_amount_yocto: string | null;
+  pending_recipient: string | null;
+  storage_reserve_yocto: string;
+  last_settlement_error: string | null;
+}
+
+function mapStatus(status: NearMilestoneView["status"]): CommissionStatus {
+  return {
+    Funded: "FUNDED",
+    Submitted: "SUBMITTED",
+    Approved: "APPROVED",
+    PayoutPending: "PAYOUT_PENDING",
+    RefundPending: "REFUND_PENDING",
+    Paid: "PAID",
+    Refunded: "REFUNDED",
+  }[status] as CommissionStatus;
+}
+
+function formatNear(yocto: string): string {
+  const value = BigInt(yocto);
+  const base = 10n ** 24n;
+  const whole = value / base;
+  const fraction = (value % base).toString().padStart(24, "0").slice(0, 2);
+  return `${whole}.${fraction}`;
+}
+
+function deliveryFromChain(
+  version: string | null,
+  hash: string | null,
+  submittedAt: string | null,
+): DeliveryCommitment | null {
+  if (!version || !hash) return null;
+  return {
+    version: Number(version),
+    fileName: `on-chain-delivery-v${version}`,
+    mimeType: "application/octet-stream",
+    sizeBytes: 0,
+    hash,
+    submittedAt: submittedAt ? `Block time · ${submittedAt}` : "On-chain commitment",
+    source: "on-chain",
+  };
+}
+
+export function mapNearMilestone(
+  chain: NearMilestoneView,
+  previous: Commission | null,
+): Commission {
+  const currentDelivery = deliveryFromChain(
+    chain.delivery_version,
+    chain.delivery_hash,
+    chain.submitted_at_ns,
+  );
+  const approvedDelivery = deliveryFromChain(
+    chain.approved_version,
+    chain.approved_hash,
+    chain.approved_at_ns,
+  );
+
+  return {
+    id: chain.milestone_id,
+    title: previous?.title ?? `NEAR testnet commission · ${chain.milestone_id}`,
+    clientId: chain.client_id,
+    creatorId: chain.creator_id,
+    creatorName: previous?.creatorName ?? chain.creator_id,
+    contractId: previous?.contractId ?? "configured testnet contract",
+    brief: previous?.brief ?? "The canonical brief is represented by the SHA-256 commitment recorded on NEAR.",
+    briefHash: chain.brief_hash,
+    amountNear: formatNear(chain.amount_yocto),
+    amountYocto: chain.amount_yocto,
+    submitBy: chain.submit_by_ns,
+    reviewUntil: chain.review_until_ns,
+    status: mapStatus(chain.status),
+    currentDelivery,
+    approvedDelivery,
+    payout: null,
+    activity: [
+      {
+        id: "chain-state",
+        label: "Canonical state loaded from NEAR",
+        detail: `${chain.status} · ${chain.milestone_id}`,
+        timestamp: "Finalized view",
+        tone: chain.status === "Paid" ? "success" : "neutral",
+      },
+    ],
+  };
+}

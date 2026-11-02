@@ -14,4 +14,8 @@ No AI subscription is required for the baseline. The assistant reports observabl
 
 ## 2026-11-02 · Testnet is not claimed yet
 
-The application currently demonstrates local invariants, not live NEAR execution. The next engineering milestone is the Rust contract and `near-workspaces` adversarial suite, followed by Wallet Selector and a user-controlled testnet account.
+The repository now contains the Rust contract, contract unit tests, and `near-workspaces` sandbox tests, plus a Wallet Selector/RPC adapter. The default application still demonstrates local invariants until `VITE_NEAR_CONTRACT_ID` points at a user-controlled testnet deployment. No testnet transaction or receipt is claimed without that configuration.
+
+## 2026-11-02 · Keep simulation and chain state separate
+
+The UI shares domain types between adapters but never treats local state as chain truth. A configured contract causes reads to come from finalized RPC state and writes to go through Wallet Selector. A missing contract ID keeps the no-credential simulation path available for reviewers.

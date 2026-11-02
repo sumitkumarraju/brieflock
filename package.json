@@ -10,10 +10,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo test --manifest-path contracts/brieflock/Cargo.toml",
+    "test:sandbox": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release && cargo test --manifest-path contracts/brieflock/Cargo.toml --test sandbox",
+    "build:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release",
     "demo:attacks": "node scripts/demo-attacks.mjs"
   },
   "dependencies": {
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "lucide-react": "^0.468.0",
+    "near-api-js": "^7.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

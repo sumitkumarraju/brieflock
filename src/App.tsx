@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
   BadgeCheck,
@@ -54,7 +54,19 @@ import {
   runAllAttackScenarios,
   runAttackScenario,
 } from "./lib/attackLab";
-import { formatBytes, sha256Hex, shortHash } from "./lib/hash";
+import { formatBytes, normalizeBrief, sha256Hex, shortHash } from "./lib/hash";
+import {
+  formatNearError,
+  getExplorerAccountUrl,
+  isNearConfigured,
+  nearRuntime,
+  parseNearToYocto,
+  readNearContract,
+  showNearWalletModal,
+  signNearContractCall,
+  subscribeToNearAccounts,
+} from "./lib/near";
+import { mapNearMilestone, type NearMilestoneView } from "./lib/nearState";
 import type {
   ActivityEvent,
   AttackResult,
@@ -76,6 +88,8 @@ const statusLabels: Record<CommissionStatus, string> = {
   FUNDED: "Funded",
   SUBMITTED: "Awaiting approval",
   APPROVED: "Approved",
+  PAYOUT_PENDING: "Payout pending",
+  REFUND_PENDING: "Refund pending",
   PAID: "Paid",
   REFUNDED: "Refunded",
 };
@@ -84,6 +98,8 @@ const statusClasses: Record<CommissionStatus, string> = {
   FUNDED: "status-neutral",
   SUBMITTED: "status-amber",
   APPROVED: "status-teal",
+  PAYOUT_PENDING: "status-amber",
+  REFUND_PENDING: "status-purple",
   PAID: "status-green",
   REFUNDED: "status-purple",
 };
@@ -150,7 +166,7 @@ function Stepper({ status }: { status: CommissionStatus }) {
     { key: "PAID", label: "Paid" },
   ];
   const order = ["FUNDED", "SUBMITTED", "APPROVED", "PAID"];
-  const currentIndex = status === "REFUNDED" ? 4 : order.indexOf(status);
+  const currentIndex = status === "REFUNDED" ? 4 : status === "PAYOUT_PENDING" ? 3 : status === "REFUND_PENDING" ? 4 : order.indexOf(status);
 
   return (
     <div className="stepper" aria-label="Commission progress">
@@ -191,6 +207,22 @@ function App() {
   const [attackResults, setAttackResults] = useState<Record<string, AttackResult>>({});
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isHashing, setIsHashing] = useState(false);
+  const [nearAccount, setNearAccount] = useState<string | null>(null);
+  const [nearBusy, setNearBusy] = useState(false);
+  const [activeMilestoneId, setActiveMilestoneId] = useState(nearRuntime.milestoneId);
+  const [createOpen, setCreateOpen] = useState(false);
+  const liveConfigured = isNearConfigured();
+
+  useEffect(() => {
+    if (!liveConfigured) return undefined;
+    let unsubscribe: (() => void) | undefined;
+    subscribeToNearAccounts((accounts) => setNearAccount(accounts[0] ?? null))
+      .then((cleanup) => {
+        unsubscribe = cleanup;
+      })
+      .catch(() => undefined);
+    return () => unsubscribe?.();
+  }, [liveConfigured]);
 
   const currentDelivery = commission.currentDelivery;
   const reviewMatch = Boolean(
@@ -203,7 +235,139 @@ function App() {
   const completedAttacks = Object.keys(attackResults).length;
   const blockedAttacks = Object.values(attackResults).filter((result) => result.actual === "blocked").length;
 
+  async function syncLiveState(milestoneId = activeMilestoneId) {
+    if (!liveConfigured) return;
+    setNearBusy(true);
+    try {
+      const chain = await readNearContract<NearMilestoneView | null>("get_milestone", {
+        milestone_id: milestoneId,
+      });
+      if (!chain) {
+        showNotice(`No milestone ${milestoneId} exists on ${nearRuntime.network}.`, "warning");
+        return;
+      }
+      setCommission((current) => mapNearMilestone(chain, current));
+      setReviewedFile(null);
+      setReviewVerified(false);
+      showNotice("Finalized state reloaded from the NEAR contract.");
+    } catch (error) {
+      showNotice(formatNearError(error), "error");
+    } finally {
+      setNearBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (liveConfigured) void syncLiveState(activeMilestoneId);
+    // The configured milestone is intentionally read once on startup; subsequent writes call sync explicitly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveConfigured]);
+
+  async function connectNearWallet() {
+    if (!liveConfigured) {
+      showNotice("Simulation is active. Set VITE_NEAR_CONTRACT_ID after deploying the contract to enable testnet wallet actions.", "warning");
+      return;
+    }
+    try {
+      await showNearWalletModal();
+    } catch (error) {
+      showNotice(formatNearError(error), "error");
+    }
+  }
+
+  async function signLiveAction(
+    methodName: string,
+    args: Record<string, unknown>,
+    depositYocto: string,
+    successMessage: string,
+  ) {
+    if (!nearAccount) {
+      showNotice("Connect a NEAR testnet wallet before signing this action.", "warning");
+      return;
+    }
+    setNearBusy(true);
+    try {
+      const outcome = await signNearContractCall(methodName, args, depositYocto);
+      showNotice(outcome ? `${successMessage} Receipt returned; re-reading chain state.` : `${successMessage} Wallet flow opened; state will update after redirect.`);
+      if (outcome) await syncLiveState();
+    } catch (error) {
+      showNotice(formatNearError(error), "error");
+    } finally {
+      setNearBusy(false);
+    }
+  }
+
+  async function createCommission(draft: CommissionDraft) {
+    setNearBusy(true);
+    try {
+      const brief = normalizeBrief(draft.brief);
+      const briefHash = await sha256Hex(brief);
+      const amountYocto = parseNearToYocto(draft.amountNear);
+      const storageReserveYocto = parseNearToYocto("0.02");
+      const createdAtNs = BigInt(Date.now()) * 1_000_000n;
+      const submitByNs = createdAtNs + 7n * 86_400_000_000_000n;
+      const reviewUntilNs = createdAtNs + 14n * 86_400_000_000_000n;
+      const milestoneId = `brieflock-${Date.now()}`;
+
+      if (liveConfigured) {
+        await signNearContractCall(
+          "create_and_fund",
+          {
+            milestone_id: milestoneId,
+            creator_id: draft.creatorId,
+            amount_yocto: amountYocto,
+            brief_hash: briefHash,
+            submit_by_ns: submitByNs.toString(),
+            review_until_ns: reviewUntilNs.toString(),
+          },
+          (BigInt(amountYocto) + BigInt(storageReserveYocto)).toString(),
+        );
+        setActiveMilestoneId(milestoneId);
+        setCreateOpen(false);
+        await syncLiveState(milestoneId);
+        showNotice("Commission funded on NEAR. Finalized terms are now canonical.");
+        return;
+      }
+
+      const local = createInitialCommission();
+      setCommission({
+        ...local,
+        id: milestoneId,
+        title: draft.title,
+        creatorId: draft.creatorId,
+        creatorName: draft.creatorId,
+        brief,
+        briefHash,
+        amountNear: draft.amountNear,
+        amountYocto,
+        status: "FUNDED",
+        currentDelivery: null,
+        approvedDelivery: null,
+        payout: null,
+        activity: [
+          newEvent("created", "Commission created", `${draft.amountNear} NEAR reserved with immutable terms`, "success"),
+        ],
+      });
+      setActiveView("overview");
+      setCreateOpen(false);
+      showNotice("Commission created in simulation. Add a delivery before approval.");
+    } catch (error) {
+      showNotice(formatNearError(error), "error");
+    } finally {
+      setNearBusy(false);
+    }
+  }
+
   const nextAction = useMemo(() => {
+    if (commission.status === "FUNDED") {
+      return {
+        eyebrow: "Creator action required",
+        title: "Submit the first delivery",
+        body: "The principal is locked. The fixed creator can now commit version 1.",
+        button: "Submit delivery v1",
+        target: "overview" as ViewId,
+      };
+    }
     if (commission.status === "SUBMITTED") {
       return {
         eyebrow: "Client action required",
@@ -222,10 +386,19 @@ function App() {
         target: "overview" as ViewId,
       };
     }
+    if (commission.status === "PAYOUT_PENDING" || commission.status === "REFUND_PENDING") {
+      return {
+        eyebrow: "Awaiting finalized receipt",
+        title: commission.status === "PAYOUT_PENDING" ? "Payout is in flight" : "Refund is in flight",
+        body: "Do not replay the action. BriefLock is waiting for the contract callback to resolve the attempt.",
+        button: "Refresh chain state",
+        target: "evidence" as ViewId,
+      };
+    }
     if (commission.status === "PAID") {
       return {
         eyebrow: "Settlement complete",
-        title: "Payment confirmed in simulation",
+        title: liveConfigured ? "Payment confirmed on NEAR" : "Payment confirmed in simulation",
         body: "Inspect the evidence ledger for the full approval and payout chain.",
         button: "View evidence",
         target: "evidence" as ViewId,
@@ -233,12 +406,12 @@ function App() {
     }
     return {
       eyebrow: "Terminal state",
-      title: "Principal returned in simulation",
+        title: liveConfigured ? "Principal returned on NEAR" : "Principal returned in simulation",
       body: "This commission cannot be approved or paid after refund.",
       button: "View evidence",
       target: "evidence" as ViewId,
     };
-  }, [commission.status, currentDelivery]);
+  }, [commission.status, currentDelivery, liveConfigured]);
 
   function showNotice(text: string, tone: "success" | "warning" | "error" = "success") {
     setNotice({ text, tone });
@@ -309,19 +482,32 @@ function App() {
     }
   }
 
-  function submitReplacement() {
+  async function submitReplacement() {
     const check = canReplaceDelivery(commission, commission.creatorId);
     if (!check.allowed) {
       showNotice(check.reason, "error");
       return;
     }
-    const delivery = createDelivery(2);
+    const delivery = createDelivery(commission.currentDelivery ? 2 : 1);
+    if (liveConfigured) {
+      await signLiveAction(
+        "submit_delivery",
+        {
+          milestone_id: commission.id,
+          expected_previous_version: String(commission.currentDelivery?.version ?? 0),
+          delivery_hash: delivery.hash,
+        },
+        "1",
+        "Delivery submission signed.",
+      );
+      return;
+    }
     setCommission((current) =>
       addActivity(
         { ...current, status: "SUBMITTED", currentDelivery: delivery, approvedDelivery: null, payout: null },
         newEvent(
-          "submitted-2",
-          "Delivery v2 submitted",
+          `submitted-${delivery.version}`,
+          `Delivery v${delivery.version} submitted`,
           `${delivery.fileName} · previous review is now stale`,
           "warning",
         ),
@@ -331,7 +517,7 @@ function App() {
     showNotice("Version 2 submitted. Any approval of version 1 must now fail.", "warning");
   }
 
-  function approveDelivery() {
+  async function approveDelivery() {
     if (!currentDelivery) return;
     const check = canApprove(
       commission,
@@ -345,6 +531,19 @@ function App() {
     }
     if (!check.allowed) {
       showNotice(check.reason, "error");
+      return;
+    }
+    if (liveConfigured) {
+      await signLiveAction(
+        "approve_delivery",
+        {
+          milestone_id: commission.id,
+          version: String(currentDelivery.version),
+          delivery_hash: currentDelivery.hash,
+        },
+        "1",
+        "Approval signed.",
+      );
       return;
     }
     setCommission((current) =>
@@ -361,7 +560,7 @@ function App() {
     showNotice("Approval recorded. The creator cannot replace this commitment now.");
   }
 
-  function releasePayout() {
+  async function releasePayout() {
     if (!commission.approvedDelivery) return;
     const check = canRelease(
       commission,
@@ -370,6 +569,19 @@ function App() {
     );
     if (!check.allowed) {
       showNotice(check.reason, "error");
+      return;
+    }
+    if (liveConfigured) {
+      await signLiveAction(
+        "release",
+        {
+          milestone_id: commission.id,
+          version: String(commission.approvedDelivery.version),
+          delivery_hash: commission.approvedDelivery.hash,
+        },
+        "0",
+        "Release request signed.",
+      );
       return;
     }
     const payout = {
@@ -392,10 +604,19 @@ function App() {
     showNotice("Payout confirmed in simulation. No testnet transaction was sent.");
   }
 
-  function refundCommission() {
+  async function refundCommission() {
     const check = canRefund(commission, commission.clientId);
     if (!check.allowed) {
       showNotice(check.reason, "error");
+      return;
+    }
+    if (liveConfigured) {
+      await signLiveAction(
+        "refund_expired",
+        { milestone_id: commission.id },
+        "1",
+        "Refund request signed.",
+      );
       return;
     }
     setCommission((current) =>
@@ -492,6 +713,8 @@ function App() {
             onRefund={refundCommission}
             onSubmitReplacement={submitReplacement}
             onReset={resetDemo}
+            onNew={() => setCreateOpen(true)}
+            liveConfigured={liveConfigured}
           />
         );
     }
@@ -534,9 +757,9 @@ function App() {
         <div className="sidebar-divider" />
         <div className="workspace-label">Protocol</div>
         <div className="protocol-list">
-          <div className="protocol-item"><span className="protocol-status online" />Local simulation</div>
-          <div className="protocol-item"><Blocks size={14} />NEAR-compatible model</div>
-          <div className="protocol-item"><KeyRound size={14} />No wallet connected</div>
+          <div className="protocol-item"><span className="protocol-status online" />{nearAccount ? `${nearRuntime.network} chain connected` : liveConfigured ? `${nearRuntime.network} contract ready` : "Local simulation"}</div>
+          <div className="protocol-item"><Blocks size={14} />{liveConfigured ? nearRuntime.contractId : "NEAR contract model"}</div>
+          <div className="protocol-item"><KeyRound size={14} />{nearAccount ?? "No wallet connected"}</div>
         </div>
 
         <div className="sidebar-bottom">
@@ -559,7 +782,12 @@ function App() {
           <button className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="breadcrumbs"><span>BriefLock</span><ChevronRight size={13} /><strong>{navItems.find((item) => item.id === activeView)?.label}</strong></div>
           <div className="topbar-actions">
-            <span className="network-pill"><span className="network-dot" /> SIMULATION <span className="network-divider" /> LOCAL</span>
+            <span className={`network-pill ${nearAccount ? "network-live" : ""}`}><span className="network-dot" /> {nearAccount ? `${nearRuntime.network.toUpperCase()} · CHAIN` : liveConfigured ? `${nearRuntime.network.toUpperCase()} · READY` : "SIMULATION · LOCAL"}</span>
+            <button className="wallet-button" onClick={connectNearWallet} disabled={nearBusy}>
+              <WalletCards size={15} />
+              {nearAccount ? <span className="wallet-account">{nearAccount}</span> : liveConfigured ? "Connect wallet" : "Testnet wallet"}
+            </button>
+            {nearAccount && <a className="icon-button top-icon" href={getExplorerAccountUrl(nearAccount)} target="_blank" rel="noreferrer" aria-label="Open account on explorer"><ExternalLink size={16} /></a>}
             <button className="icon-button top-icon" aria-label="View contract model"><Code2 size={17} /></button>
             <div className="top-avatar">SK</div>
           </div>
@@ -574,8 +802,59 @@ function App() {
             </div>
           )}
           {renderView()}
+          {createOpen && <CreateCommissionModal liveConfigured={liveConfigured} busy={nearBusy} onClose={() => setCreateOpen(false)} onSubmit={createCommission} />}
         </div>
       </main>
+    </div>
+  );
+}
+
+interface CommissionDraft {
+  title: string;
+  creatorId: string;
+  amountNear: string;
+  brief: string;
+}
+
+function CreateCommissionModal({
+  liveConfigured,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  liveConfigured: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (draft: CommissionDraft) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<CommissionDraft>({
+    title: "Kanso Coffee · winter launch poster",
+    creatorId: "studio.kanso.testnet",
+    amountNear: "2.40",
+    brief: "Create a 4:5 launch poster for Kanso Coffee's winter menu.\nTone: warm, quiet, editorial.\nInclude the Kanso Coffee wordmark, the line ‘Winter, poured slowly’, and a clear opening date.\nDeliver one PNG, minimum 1600 × 2000 px.",
+  });
+
+  function update(field: keyof CommissionDraft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSubmit(draft);
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-commission-title">
+        <div className="modal-header"><div><span className="section-kicker">NEW COMMISSION / IMMUTABLE TERMS</span><h2 id="create-commission-title">Fund a protected milestone.</h2><p>Lock the brief, recipient, amount, and review boundaries before a file exists.</p></div><button className="icon-button" onClick={onClose} aria-label="Close new commission"><X size={17} /></button></div>
+        <form onSubmit={submit} className="commission-form">
+          <label className="field"><span>Commission name</span><input value={draft.title} onChange={(event) => update("title", event.target.value)} required maxLength={120} /><small>Visible label only; the brief hash is the canonical content commitment.</small></label>
+          <div className="form-row"><label className="field"><span>Creator account</span><input value={draft.creatorId} onChange={(event) => update("creatorId", event.target.value)} pattern="^(([a-z0-9]+[-_])*[a-z0-9]+\.)*([a-z0-9]+[-_])*[a-z0-9]+$" required /><small>Fixed NEAR account that can submit and receive.</small></label><label className="field amount-field"><span>Principal <em>NEAR</em></span><input inputMode="decimal" value={draft.amountNear} onChange={(event) => update("amountNear", event.target.value)} pattern="^\d+(\.\d+)?$" required /><small>Exact yoctoNEAR conversion; no floating point.</small></label></div>
+          <label className="field"><span>Canonical creative brief</span><textarea value={draft.brief} onChange={(event) => update("brief", event.target.value)} rows={6} minLength={20} maxLength={4000} required /><small>Normalized UTF-8 bytes are hashed before funding. Storage reserve: 0.02 NEAR.</small></label>
+          <div className="modal-policy"><ShieldCheck size={16} /><span><strong>{liveConfigured ? "NEAR testnet transaction" : "Simulation record"}</strong>{liveConfigured ? " Wallet approval funds the contract; finalized state replaces browser state." : " No funds move. Set VITE_NEAR_CONTRACT_ID to enable the live path."}</span></div>
+          <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary" disabled={busy}>{busy ? <RefreshCw className="spin" size={15} /> : <WalletCards size={15} />}{busy ? "Waiting for wallet…" : liveConfigured ? "Fund on NEAR testnet" : "Create in simulation"}<ArrowUpRight size={14} /></button></div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -588,6 +867,8 @@ interface OverviewProps {
   onRefund: () => void;
   onSubmitReplacement: () => void;
   onReset: () => void;
+  onNew: () => void;
+  liveConfigured: boolean;
 }
 
 function OverviewView({
@@ -598,6 +879,8 @@ function OverviewView({
   onRefund,
   onSubmitReplacement,
   onReset,
+  onNew,
+  liveConfigured,
 }: OverviewProps) {
   const isApproved = commission.status === "APPROVED";
   const isSubmitted = commission.status === "SUBMITTED";
@@ -607,7 +890,7 @@ function OverviewView({
         kicker="CREATIVE PAYMENT CONTROL"
         title="Approve the work. Bind the payment."
         description="A single commitment connects the brief, the exact delivery bytes, and the only account allowed to receive the milestone."
-        action={<button className="button button-quiet" onClick={onReset}><RotateCcw size={15} /> Reset demo</button>}
+        action={<div className="header-actions"><button className="button button-primary" onClick={onNew}><WalletCards size={15} /> New commission</button><button className="button button-quiet" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></div>}
       />
 
       <div className="trust-strip">
@@ -644,6 +927,7 @@ function OverviewView({
               className="button button-primary"
               onClick={() => {
                 if (isApproved) onRelease();
+                else if (commission.status === "FUNDED") onSubmitReplacement();
                 else onNavigate(nextAction.target);
               }}
               disabled={commission.status === "REFUNDED"}
@@ -673,13 +957,13 @@ function OverviewView({
             <div><strong>Kanso Studio</strong><p>Only this account can submit or replace a delivery before approval.</p></div>
           </div>
           <div className="creator-actions">
-            <button className="button button-secondary" onClick={onSubmitReplacement} disabled={!isSubmitted}>Submit version 2 <FileUp size={14} /></button>
+            <button className="button button-secondary" onClick={onSubmitReplacement} disabled={!isSubmitted && commission.status !== "FUNDED"}>Submit version {commission.currentDelivery ? 2 : 1} <FileUp size={14} /></button>
             <button className="button button-quiet danger-button" onClick={onRefund} disabled={!isSubmitted}>Return principal</button>
           </div>
         </section>
       </div>
 
-      <div className="disclosure"><CircleAlert size={15} /><span>Simulation mode: balances, approvals, and evidence are local state. The next integration replaces these adapters with a compiled NEAR contract and finalized receipts.</span></div>
+      <div className="disclosure"><CircleAlert size={15} /><span>{liveConfigured ? `NEAR ${nearRuntime.network} mode: this view is backed by ${nearRuntime.contractId}. Refresh after every wallet action to read finalized contract state.` : "Simulation mode: balances, approvals, and evidence are local state. Set VITE_NEAR_CONTRACT_ID after deployment to switch this workflow to NEAR testnet."}</span></div>
     </>
   );
 }

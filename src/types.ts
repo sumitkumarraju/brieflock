@@ -2,6 +2,8 @@ export type CommissionStatus =
   | "FUNDED"
   | "SUBMITTED"
   | "APPROVED"
+  | "PAYOUT_PENDING"
+  | "REFUND_PENDING"
   | "PAID"
   | "REFUNDED";
 
@@ -9,7 +11,7 @@ export type ViewId = "overview" | "review" | "attacks" | "evidence";
 
 export type ActivityTone = "neutral" | "success" | "warning" | "danger";
 
-export type DeliverySource = "demo fixture" | "local file";
+export type DeliverySource = "demo fixture" | "local file" | "on-chain";
 
 export interface DeliveryCommitment {
   version: number;

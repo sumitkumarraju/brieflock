@@ -6,7 +6,7 @@ BriefLock is a NEAR-oriented creative milestone payment workflow. It connects an
 
 ## Current build status
 
-This repository contains the first judgeable prototype slice:
+This repository contains a judgeable prototype with a real contract boundary:
 
 - polished React/Vite dashboard;
 - clearly labeled **local simulation** mode;
@@ -19,8 +19,12 @@ This repository contains the first judgeable prototype slice:
 - Attack Lab with six named adversarial scenarios;
 - downloadable, honestly labeled simulation evidence report;
 - responsive desktop/mobile layout and Playwright smoke coverage.
+- Rust `near-sdk` contract with immutable terms, exact version/hash approval, fixed-recipient async settlement, refunds, and storage reserve accounting;
+- Rust unit tests plus `near-workspaces` sandbox integration tests for normal payout, replay, unauthorized approval, and stale approvals;
+- Wallet Selector v10 integration that activates against NEAR testnet when `VITE_NEAR_CONTRACT_ID` is configured;
+- exact yoctoNEAR amount parsing and testnet explorer/account links.
 
-The NEAR Rust contract, `near-workspaces` sandbox suite, Wallet Selector, and testnet deployment are the next integration milestone. This README intentionally does **not** claim live contract execution, wallet signatures, explorer links, or testnet receipts yet.
+The default checkout remains credential-free and starts in clearly labeled local simulation mode. No testnet deployment or receipt is claimed until a user-controlled contract account is configured.
 
 ## Run locally
 
@@ -32,6 +36,25 @@ npm run dev
 ```
 
 Open <http://127.0.0.1:4173>.
+
+### Enable NEAR testnet mode
+
+Install the current NEAR CLI-RS and create/use a user-controlled testnet account. Build and deploy the contract:
+
+```sh
+npm run build:contract
+./scripts/deploy-testnet.sh <your-contract-account.testnet>
+```
+
+Copy `.env.example` to `.env.local` and set:
+
+```sh
+VITE_NEAR_NETWORK=testnet
+VITE_NEAR_CONTRACT_ID=<your-contract-account.testnet>
+VITE_NEAR_MILESTONE_ID=kanso-001
+```
+
+Restart Vite. The top bar will show **TESTNET · READY**, wallet connection will use Wallet Selector, and the app will re-read finalized contract state after actions. Browser simulation remains the fallback when the contract ID is empty.
 
 ### Judge walkthrough
 
@@ -52,13 +75,16 @@ npm run build
 npm run demo:attacks
 npm run demo:attacks -- --write-report
 npm run test:e2e
+npm run test:contract
+npm run test:sandbox
+npm run build:contract
 ```
 
-The baseline unit and browser tests require no paid AI service or wallet credentials.
+The baseline unit, contract, sandbox, and browser tests require no paid AI service. Testnet deployment requires a user-controlled account and wallet.
 
 ## Why NEAR
 
-The intended production boundary is a Rust contract on NEAR. Funding atomically stores immutable milestone terms; only the original client can approve the current version/hash; release derives amount and recipient from contract state; asynchronous settlement and refunds remain contract state transitions. The local adapter mirrors those semantics so the interface can be tested before a wallet or testnet account is available.
+The Rust contract on NEAR is the canonical production boundary. Funding atomically stores immutable milestone terms; only the original client can approve the current version/hash; release derives amount and recipient from contract state; asynchronous settlement and refunds remain contract state transitions. The browser adapter reads with RPC and signs with Wallet Selector only when explicitly configured. The local adapter mirrors the same semantics so the interface can be tested before a wallet or testnet account is available.
 
 ## Trust boundaries
 
@@ -66,19 +92,20 @@ The intended production boundary is a Rust contract on NEAR. Funding atomically 
 - A browser only verifies the bytes the reviewer actually selects.
 - Rules-based review is advice, not an approval oracle.
 - Briefs, invoices, file metadata, and future model output are untrusted input.
-- Local simulation evidence is not a blockchain receipt.
+- Local simulation evidence is not a blockchain receipt; sandbox evidence is not testnet evidence.
 - No private key, seed phrase, model key, or mainnet funds are required or stored.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), and [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+For the real-chain setup, see [`docs/NEAR_TESTNET.md`](docs/NEAR_TESTNET.md).
 
 ## Hackathon submission state
 
 - Event: NEAR HACKATHON
 - Intended tracks: AI Security & Defense; Real-World Money
 - Project: BriefLock — Verified Delivery, Protected Creator Payments
-- Public repository: pending publication
+- Public repository: <https://github.com/sumitkumarraju/brieflock>
 - Demo post: not published
-- Testnet contract: not deployed
+- Testnet contract: user-controlled configuration required; no deployment is claimed in this repository
 
 The final application must use factual implementation language and include the human-provided email, team size, mainnet payout account, public repository URL, and public X demo URL. Do not submit placeholders.
 
