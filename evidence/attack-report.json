@@ -1,0 +1,51 @@
+{
+  "report": "BriefLock Attack Lab",
+  "generatedAt": "2026-11-02T15:32:12.101Z",
+  "mode": "simulation",
+  "network": "local",
+  "scenarios": [
+    {
+      "scenarioId": "A01",
+      "title": "Unauthorized approval",
+      "actual": "blocked",
+      "layer": "SIMULATION",
+      "evidence": "SIM-A01-BLOCK"
+    },
+    {
+      "scenarioId": "A02",
+      "title": "Stale version approval",
+      "actual": "blocked",
+      "layer": "SIMULATION",
+      "evidence": "SIM-A02-BLOCK"
+    },
+    {
+      "scenarioId": "A03",
+      "title": "Replace after approval",
+      "actual": "blocked",
+      "layer": "SIMULATION",
+      "evidence": "SIM-A03-BLOCK"
+    },
+    {
+      "scenarioId": "A05",
+      "title": "Invoice recipient redirect",
+      "actual": "blocked",
+      "layer": "LOCAL POLICY",
+      "evidence": "SIM-A05-BLOCK"
+    },
+    {
+      "scenarioId": "A06",
+      "title": "Replay completed payout",
+      "actual": "blocked",
+      "layer": "SIMULATION",
+      "evidence": "SIM-A06-BLOCK"
+    },
+    {
+      "scenarioId": "A08",
+      "title": "Release before approval",
+      "actual": "blocked",
+      "layer": "SIMULATION",
+      "evidence": "SIM-A08-BLOCK"
+    }
+  ],
+  "limitation": "This report records deterministic local checks. It is not a blockchain receipt and must not be presented as testnet evidence."
+}
