@@ -39,3 +39,20 @@ test("creates a simulation commission and commits its first delivery", async ({ 
   await page.getByRole("button", { name: "Submit delivery v1" }).click();
   await expect(page.getByRole("main").getByText("Awaiting approval")).toBeVisible();
 });
+
+test("commits the selected local bytes for a new commission", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New commission" }).click();
+  await page.getByRole("button", { name: "Create in simulation" }).click();
+  const openNavigation = page.getByRole("button", { name: "Open navigation" });
+  if (await openNavigation.isVisible()) await openNavigation.click();
+  await page.getByRole("button", { name: "Delivery review", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "selected-delivery.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("BriefLock selected delivery bytes"),
+  });
+  await expect(page.getByRole("button", { name: "Commit selected file as delivery v1" })).toBeVisible();
+  await page.getByRole("button", { name: "Commit selected file as delivery v1" }).click();
+  await expect(page.getByText("Awaiting approval").last()).toBeVisible();
+});

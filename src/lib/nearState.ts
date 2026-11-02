@@ -1,4 +1,4 @@
-import type { Commission, CommissionStatus, DeliveryCommitment } from "../types";
+import type { ActivityEvent, Commission, CommissionStatus, DeliveryCommitment } from "../types";
 
 export interface NearMilestoneView {
   milestone_id: string;
@@ -53,6 +53,17 @@ function formatNear(yocto: string): string {
   return `${whole}.${fraction}`;
 }
 
+function formatChainDate(timestampNs: string): string {
+  try {
+    const milliseconds = Number(BigInt(timestampNs) / 1_000_000n);
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+      new Date(milliseconds),
+    );
+  } catch {
+    return "Chain timestamp unavailable";
+  }
+}
+
 function deliveryFromChain(
   version: string | null,
   hash: string | null,
@@ -65,7 +76,7 @@ function deliveryFromChain(
     mimeType: "application/octet-stream",
     sizeBytes: 0,
     hash,
-    submittedAt: submittedAt ? `Block time · ${submittedAt}` : "On-chain commitment",
+    submittedAt: submittedAt ? formatChainDate(submittedAt) : "On-chain commitment",
     source: "on-chain",
   };
 }
@@ -74,6 +85,8 @@ export function mapNearMilestone(
   chain: NearMilestoneView,
   previous: Commission | null,
 ): Commission {
+  const sameMilestone = previous?.id === chain.milestone_id;
+  const terminalSettlement = chain.status === "Paid" || chain.status === "Refunded";
   const currentDelivery = deliveryFromChain(
     chain.delivery_version,
     chain.delivery_hash,
@@ -96,12 +109,12 @@ export function mapNearMilestone(
     briefHash: chain.brief_hash,
     amountNear: formatNear(chain.amount_yocto),
     amountYocto: chain.amount_yocto,
-    submitBy: chain.submit_by_ns,
-    reviewUntil: chain.review_until_ns,
+    submitBy: formatChainDate(chain.submit_by_ns),
+    reviewUntil: formatChainDate(chain.review_until_ns),
     status: mapStatus(chain.status),
     currentDelivery,
     approvedDelivery,
-    payout: null,
+    payout: sameMilestone && terminalSettlement ? previous?.payout ?? null : null,
     activity: [
       {
         id: "chain-state",
@@ -109,7 +122,9 @@ export function mapNearMilestone(
         detail: `${chain.status} · ${chain.milestone_id}`,
         timestamp: "Finalized view",
         tone: chain.status === "Paid" ? "success" : "neutral",
-      },
+        executionLayer: "TESTNET",
+      } satisfies ActivityEvent,
+      ...(sameMilestone ? previous?.activity.filter((event) => event.id !== "chain-state") ?? [] : []),
     ],
   };
 }

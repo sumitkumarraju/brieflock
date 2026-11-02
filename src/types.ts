@@ -29,12 +29,19 @@ export interface ActivityEvent {
   detail: string;
   timestamp: string;
   tone: ActivityTone;
+  executionLayer?: "SIMULATION" | "TESTNET";
+  transactionHash?: string;
+  explorerUrl?: string;
 }
 
 export interface PayoutRecord {
   amountNear: string;
   recipient: string;
-  simulationId: string;
+  mode: "simulation" | "testnet";
+  simulationId?: string;
+  transactionHash?: string;
+  explorerUrl?: string;
+  blockHash?: string;
   confirmedAt: string;
 }
 

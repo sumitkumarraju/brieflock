@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo test --manifest-path contracts/brieflock/Cargo.toml",
+    "test:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo test --manifest-path contracts/brieflock/Cargo.toml --lib",
     "test:sandbox": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release && cargo test --manifest-path contracts/brieflock/Cargo.toml --test sandbox",
     "build:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release",
     "demo:attacks": "node scripts/demo-attacks.mjs"

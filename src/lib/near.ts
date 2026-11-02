@@ -4,6 +4,15 @@ import "@near-wallet-selector/modal-ui/styles.css";
 
 export type NearNetwork = "testnet" | "mainnet";
 
+export interface NearTransactionReceipt {
+  transactionHash: string;
+  blockHash?: string;
+  finalStatus?: string;
+  succeeded: boolean;
+  errorMessage?: string;
+  explorerUrl: string;
+}
+
 const network = (import.meta.env.VITE_NEAR_NETWORK ?? "testnet") as NearNetwork;
 const contractId = (import.meta.env.VITE_NEAR_CONTRACT_ID ?? "").trim();
 const milestoneId = (import.meta.env.VITE_NEAR_MILESTONE_ID ?? "kanso-001").trim();
@@ -34,6 +43,46 @@ export function getExplorerTransactionUrl(transactionHash: string): string {
 
 export function getExplorerAccountUrl(accountId: string): string {
   return `${explorerUrl}/address/${encodeURIComponent(accountId)}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function stringField(record: Record<string, unknown> | null, field: string): string | undefined {
+  const value = record?.[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function extractNearReceipt(outcome: unknown): NearTransactionReceipt | null {
+  const root = asRecord(outcome);
+  if (!root) return null;
+
+  const transaction = asRecord(root.transaction);
+  const transactionOutcome = asRecord(root.transaction_outcome);
+  const outcomeDetails = asRecord(transactionOutcome?.outcome);
+  const transactionHash =
+    stringField(transaction, "hash") ??
+    stringField(transaction, "transaction_hash") ??
+    stringField(transactionOutcome, "id") ??
+    stringField(root, "transaction_hash");
+
+  if (!transactionHash) return null;
+
+  const status = asRecord(root.status);
+  const statusFailure = asRecord(status?.Failure);
+  const failed = root.status === "Failure" || Boolean(statusFailure);
+
+  return {
+    transactionHash,
+    blockHash:
+      stringField(transactionOutcome, "block_hash") ??
+      stringField(outcomeDetails, "block_hash"),
+    finalStatus: stringField(root, "final_execution_status"),
+    succeeded: !failed,
+    errorMessage: stringField(statusFailure, "error_message"),
+    explorerUrl: getExplorerTransactionUrl(transactionHash),
+  };
 }
 
 export function formatNearError(error: unknown): string {
@@ -112,14 +161,14 @@ export async function signNearContractCall(
   methodName: string,
   args: Record<string, unknown>,
   depositYocto = "0",
-): Promise<unknown> {
+): Promise<NearTransactionReceipt | null> {
   const selector = await getSelector();
   const { actionCreators } = await import("@near-wallet-selector/core");
   const accountId = selector.store.getState().accounts[0]?.accountId;
   if (!accountId) throw new Error("Connect a testnet wallet before signing.");
 
   const wallet = await selector.wallet();
-  return wallet.signAndSendTransaction({
+  const outcome = await wallet.signAndSendTransaction({
     signerId: accountId,
     receiverId: contractId,
     actions: [
@@ -131,6 +180,11 @@ export async function signNearContractCall(
       ),
     ],
   });
+  const receipt = extractNearReceipt(outcome);
+  if (receipt && !receipt.succeeded) {
+    throw new Error(receipt.errorMessage ?? `NEAR transaction ${receipt.transactionHash} failed.`);
+  }
+  return receipt;
 }
 
 export async function readNearContract<T>(method: string, args: Record<string, unknown>): Promise<T> {

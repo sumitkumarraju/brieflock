@@ -212,6 +212,8 @@ function App() {
   const [activeMilestoneId, setActiveMilestoneId] = useState(nearRuntime.milestoneId);
   const [createOpen, setCreateOpen] = useState(false);
   const liveConfigured = isNearConfigured();
+  const [liveStateStatus, setLiveStateStatus] = useState<"checking" | "available" | "missing" | "error">(liveConfigured ? "checking" : "available");
+  const [liveStateError, setLiveStateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!liveConfigured) return undefined;
@@ -238,19 +240,25 @@ function App() {
   async function syncLiveState(milestoneId = activeMilestoneId) {
     if (!liveConfigured) return;
     setNearBusy(true);
+    setLiveStateStatus("checking");
+    setLiveStateError(null);
     try {
       const chain = await readNearContract<NearMilestoneView | null>("get_milestone", {
         milestone_id: milestoneId,
       });
       if (!chain) {
+        setLiveStateStatus("missing");
         showNotice(`No milestone ${milestoneId} exists on ${nearRuntime.network}.`, "warning");
         return;
       }
+      setLiveStateStatus("available");
       setCommission((current) => mapNearMilestone(chain, current));
       setReviewedFile(null);
       setReviewVerified(false);
       showNotice("Finalized state reloaded from the NEAR contract.");
     } catch (error) {
+      setLiveStateStatus("error");
+      setLiveStateError(formatNearError(error));
       showNotice(formatNearError(error), "error");
     } finally {
       setNearBusy(false);
@@ -280,16 +288,56 @@ function App() {
     args: Record<string, unknown>,
     depositYocto: string,
     successMessage: string,
+    expectedSigner?: string,
   ) {
     if (!nearAccount) {
       showNotice("Connect a NEAR testnet wallet before signing this action.", "warning");
       return;
     }
+    if (expectedSigner && nearAccount !== expectedSigner) {
+      showNotice(`This action requires ${expectedSigner}. The connected wallet is ${nearAccount}.`, "error");
+      return;
+    }
     setNearBusy(true);
     try {
-      const outcome = await signNearContractCall(methodName, args, depositYocto);
-      showNotice(outcome ? `${successMessage} Receipt returned; re-reading chain state.` : `${successMessage} Wallet flow opened; state will update after redirect.`);
-      if (outcome) await syncLiveState();
+      const receipt = await signNearContractCall(methodName, args, depositYocto);
+      if (!receipt) {
+        showNotice(`${successMessage} Wallet flow opened. Wait for finality, then refresh chain state.`, "warning");
+        return;
+      }
+
+      const settlement = methodName === "release" || methodName === "refund_expired";
+      const receiptActivity = {
+        id: `tx-${receipt.transactionHash}`,
+        label: `${successMessage.replace(" signed.", "")} finalized`,
+        detail: `${receipt.transactionHash}${receipt.blockHash ? ` · block ${receipt.blockHash}` : ""}`,
+        timestamp: nowLabel(),
+        tone: "success" as const,
+        executionLayer: "TESTNET" as const,
+        transactionHash: receipt.transactionHash,
+        explorerUrl: receipt.explorerUrl,
+      };
+      setCommission((current) =>
+        addActivity(
+          {
+            ...current,
+            payout: settlement
+              ? {
+                  amountNear: current.amountNear,
+                  recipient: methodName === "release" ? current.creatorId : current.clientId,
+                  mode: "testnet",
+                  transactionHash: receipt.transactionHash,
+                  explorerUrl: receipt.explorerUrl,
+                  blockHash: receipt.blockHash,
+                  confirmedAt: nowLabel(),
+                }
+              : current.payout,
+          },
+          receiptActivity,
+        ),
+      );
+      showNotice(`${successMessage} finalized. Re-reading canonical state.`);
+      await syncLiveState();
     } catch (error) {
       showNotice(formatNearError(error), "error");
     } finally {
@@ -310,7 +358,11 @@ function App() {
       const milestoneId = `brieflock-${Date.now()}`;
 
       if (liveConfigured) {
-        await signNearContractCall(
+        if (!nearAccount) {
+          showNotice("Connect the client wallet before funding a NEAR commission.", "warning");
+          return;
+        }
+        const receipt = await signNearContractCall(
           "create_and_fund",
           {
             milestone_id: milestoneId,
@@ -322,8 +374,46 @@ function App() {
           },
           (BigInt(amountYocto) + BigInt(storageReserveYocto)).toString(),
         );
+        if (!receipt) {
+          showNotice("Wallet flow opened. Wait for finality before looking up the new milestone.", "warning");
+          return;
+        }
         setActiveMilestoneId(milestoneId);
         setCreateOpen(false);
+        setCommission((current) =>
+          addActivity(
+            {
+              ...current,
+              id: milestoneId,
+              title: draft.title,
+              clientId: nearAccount ?? current.clientId,
+              creatorId: draft.creatorId,
+              creatorName: draft.creatorId,
+              contractId: nearRuntime.contractId,
+              brief,
+              briefHash,
+              amountNear: draft.amountNear,
+              amountYocto,
+              submitBy: new Date(Number(submitByNs / 1_000_000n)).toLocaleDateString(),
+              reviewUntil: new Date(Number(reviewUntilNs / 1_000_000n)).toLocaleDateString(),
+              status: "FUNDED",
+              currentDelivery: null,
+              approvedDelivery: null,
+              payout: null,
+              activity: [],
+            },
+            {
+              id: `tx-${receipt.transactionHash}`,
+              label: "Funding finalized on NEAR",
+              detail: `${amountYocto} yoctoNEAR principal + storage reserve · ${receipt.transactionHash}`,
+              timestamp: nowLabel(),
+              tone: "success",
+              executionLayer: "TESTNET",
+              transactionHash: receipt.transactionHash,
+              explorerUrl: receipt.explorerUrl,
+            },
+          ),
+        );
         await syncLiveState(milestoneId);
         showNotice("Commission funded on NEAR. Finalized terms are now canonical.");
         return;
@@ -466,6 +556,7 @@ function App() {
     setIsHashing(true);
     try {
       const hash = await sha256Hex(await file.arrayBuffer());
+      const matches = currentDelivery?.hash === hash;
       setReviewedFile({
         fileName: file.name,
         mimeType: file.type || "application/octet-stream",
@@ -473,8 +564,15 @@ function App() {
         hash,
         source: "local file",
       });
-      setReviewVerified(false);
-      showNotice("File hashed on this device. Verify the commitment before approving.", "warning");
+      setReviewVerified(matches);
+      showNotice(
+        matches
+          ? "Exact delivery bytes match the current commitment. Human approval is ready."
+          : currentDelivery
+            ? "File hashed on this device, but it does not match the current commitment."
+            : "File hashed on this device. Commit it as the next delivery when ready.",
+        matches ? "success" : "warning",
+      );
     } catch {
       showNotice("The file could not be hashed in this browser.", "error");
     } finally {
@@ -488,7 +586,29 @@ function App() {
       showNotice(check.reason, "error");
       return;
     }
-    const delivery = createDelivery(commission.currentDelivery ? 2 : 1);
+    const version = commission.currentDelivery ? commission.currentDelivery.version + 1 : 1;
+    const selectedDelivery = reviewedFile?.source === "local file"
+      ? {
+          version,
+          fileName: reviewedFile.fileName,
+          mimeType: reviewedFile.mimeType,
+          sizeBytes: reviewedFile.sizeBytes,
+          hash: reviewedFile.hash,
+          submittedAt: nowLabel(),
+          source: "local file" as const,
+        }
+      : null;
+    if (liveConfigured && !selectedDelivery) {
+      showNotice("Choose the actual delivery file in Delivery Review before signing its on-chain commitment.", "warning");
+      setActiveView("review");
+      return;
+    }
+    if (!selectedDelivery && version > 2) {
+      showNotice("Choose a local delivery file before submitting another version.", "warning");
+      setActiveView("review");
+      return;
+    }
+    const delivery = selectedDelivery ?? createDelivery(version === 1 ? 1 : 2);
     if (liveConfigured) {
       await signLiveAction(
         "submit_delivery",
@@ -499,6 +619,7 @@ function App() {
         },
         "1",
         "Delivery submission signed.",
+        commission.creatorId,
       );
       return;
     }
@@ -543,6 +664,7 @@ function App() {
         },
         "1",
         "Approval signed.",
+        commission.clientId,
       );
       return;
     }
@@ -587,6 +709,7 @@ function App() {
     const payout = {
       amountNear: commission.amountNear,
       recipient: commission.creatorId,
+      mode: "simulation" as const,
       simulationId: "SIM-PAYOUT-BL-2401",
       confirmedAt: nowLabel(),
     };
@@ -616,6 +739,7 @@ function App() {
         { milestone_id: commission.id },
         "1",
         "Refund request signed.",
+        commission.clientId,
       );
       return;
     }
@@ -649,13 +773,16 @@ function App() {
     const report = {
       report: "BriefLock Attack Lab",
       generatedAt: new Date().toISOString(),
-      mode: "simulation",
-      network: "local",
+      mode: liveConfigured ? "testnet" : "simulation",
+      network: liveConfigured ? nearRuntime.network : "local",
+      contractId: liveConfigured ? nearRuntime.contractId : null,
       commissionId: commission.id,
       status: commission.status,
+      payout: commission.payout,
       scenarios: Object.values(attackResults),
-      limitation:
-        "Simulation evidence is not a blockchain receipt. Compile and run the NEAR sandbox contract before claiming on-chain execution.",
+      limitation: liveConfigured
+        ? "Attack Lab scenarios remain local policy simulations. The commission state and any linked transaction hash come from the configured NEAR contract."
+        : "Simulation evidence is not a blockchain receipt. Compile and run the NEAR sandbox contract before claiming on-chain execution.",
     };
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -664,7 +791,7 @@ function App() {
     anchor.download = "brieflock-attack-report.json";
     anchor.click();
     URL.revokeObjectURL(url);
-    showNotice("Downloaded the current simulation evidence report.");
+    showNotice(`Downloaded the current ${liveConfigured ? "testnet" : "simulation"} evidence report.`);
   }
 
   function renderView() {
@@ -682,6 +809,7 @@ function App() {
             onSelectFile={handleFileSelection}
             onApprove={approveDelivery}
             onSubmitReplacement={submitReplacement}
+            liveConfigured={liveConfigured}
           />
         );
       case "attacks":
@@ -692,6 +820,7 @@ function App() {
             blocked={blockedAttacks}
             onRun={runAttack}
             onRunAll={runAllAttacks}
+            liveConfigured={liveConfigured}
           />
         );
       case "evidence":
@@ -700,7 +829,8 @@ function App() {
             commission={commission}
             attackResults={attackResults}
             onDownload={downloadEvidence}
-            onCopy={() => showNotice("Evidence is generated from the current local state.", "warning")}
+            onCopy={() => showNotice(liveConfigured ? "Chain evidence context is included in the downloaded report." : "Evidence is generated from the current local state.", liveConfigured ? "success" : "warning")}
+            liveConfigured={liveConfigured}
           />
         );
       default:
@@ -801,11 +931,56 @@ function App() {
               <button onClick={() => setNotice(null)} aria-label="Dismiss notification"><X size={14} /></button>
             </div>
           )}
-          {renderView()}
+          {liveConfigured && liveStateStatus !== "available" ? (
+            <LiveSetupView
+              busy={nearBusy}
+              connected={Boolean(nearAccount)}
+              error={liveStateError}
+              status={liveStateStatus}
+              onConnect={connectNearWallet}
+              onNew={() => setCreateOpen(true)}
+              onRefresh={() => void syncLiveState()}
+            />
+          ) : renderView()}
           {createOpen && <CreateCommissionModal liveConfigured={liveConfigured} busy={nearBusy} onClose={() => setCreateOpen(false)} onSubmit={createCommission} />}
         </div>
       </main>
     </div>
+  );
+}
+
+function LiveSetupView({
+  busy,
+  connected,
+  error,
+  status,
+  onConnect,
+  onNew,
+  onRefresh,
+}: {
+  busy: boolean;
+  connected: boolean;
+  error: string | null;
+  status: "checking" | "available" | "missing" | "error";
+  onConnect: () => void;
+  onNew: () => void;
+  onRefresh: () => void;
+}) {
+  const checking = status === "checking";
+  const hasError = status === "error";
+  return (
+    <section className="live-setup card">
+      <div className="live-setup-mark">{checking ? <RefreshCw className="spin" size={22} /> : hasError ? <CircleAlert size={22} /> : <Blocks size={22} />}</div>
+      <span className="section-kicker">{nearRuntime.network.toUpperCase()} / {checking ? "READING CANONICAL STATE" : hasError ? "RPC READ FAILED" : "NO MILESTONE SELECTED"}</span>
+      <h1>{checking ? "Reading the contract state." : hasError ? "The chain could not be read." : "Connect a real commission to the dashboard."}</h1>
+      <p>{checking ? `Looking up ${nearRuntime.milestoneId} on ${nearRuntime.contractId}.` : hasError ? error : <>No commission named <code>{nearRuntime.milestoneId}</code> was found on <code>{nearRuntime.contractId}</code>. This screen will not fall back to local balances while testnet mode is enabled.</>}</p>
+      <div className="live-setup-checks">
+        <div><span className={connected ? "setup-check ready" : "setup-check"}>{connected ? <Check size={12} /> : <CircleDashed size={12} />}</span><span><strong>Wallet</strong><small>{connected ? "Connected for signing" : "Connect before funding"}</small></span></div>
+        <div><span className="setup-check ready"><Check size={12} /></span><span><strong>Contract</strong><small>{nearRuntime.contractId}</small></span></div>
+        <div><span className={`setup-check ${checking ? "ready" : ""}`}>{checking ? <RefreshCw className="spin" size={12} /> : <CircleDashed size={12} />}</span><span><strong>Canonical state</strong><small>{checking ? "Reading finalized RPC state" : hasError ? "Read failed; retry required" : "Waiting for a funded milestone"}</small></span></div>
+      </div>
+      <div className="live-setup-actions"><button className="button button-primary" onClick={onNew} disabled={busy || checking || hasError}><WalletCards size={15} /> Fund a commission</button><button className="button button-quiet" onClick={onConnect} disabled={busy}>{connected ? "Wallet connected" : "Connect wallet"}</button><button className="text-button" onClick={onRefresh} disabled={busy}><RefreshCw size={13} /> {hasError ? "Retry state read" : "Refresh state"}</button></div>
+    </section>
   );
 }
 
@@ -905,7 +1080,7 @@ function OverviewView({
           <span className="lock-indicator"><LockKeyhole size={14} /> Terms locked</span>
         </div>
         <div className="hero-main-row">
-          <div><h2>{commission.title}</h2><p>One milestone · native NEAR principal · simulation ledger</p></div>
+          <div><h2>{commission.title}</h2><p>One milestone · native NEAR principal · {liveConfigured ? `${nearRuntime.network} contract state` : "simulation ledger"}</p></div>
           <div className="amount-block"><span>Escrow principal</span><strong>{commission.amountNear} <small>NEAR</small></strong><em>≈ locked at funding</em></div>
         </div>
         <div className="hero-details-grid">
@@ -941,7 +1116,7 @@ function OverviewView({
         <section className="mini-stats card">
           <div className="mini-stat"><span>Committed file</span><strong>{commission.currentDelivery ? `v${commission.currentDelivery.version}` : "—"}</strong><em>{commission.currentDelivery ? shortHash(commission.currentDelivery.hash, 5) : "No delivery yet"}</em></div>
           <div className="mini-stat"><span>Approval</span><strong>{commission.approvedDelivery ? "Signed" : "Pending"}</strong><em>{commission.approvedDelivery ? `v${commission.approvedDelivery.version} frozen` : "Client action required"}</em></div>
-          <div className="mini-stat"><span>Settlement</span><strong>{commission.payout ? "Confirmed" : "Unreleased"}</strong><em>{commission.payout ? commission.payout.recipient : "No transfer started"}</em></div>
+           <div className="mini-stat"><span>Settlement</span><strong>{commission.payout ? "Confirmed" : commission.status.includes("PENDING") ? "Pending" : "Unreleased"}</strong><em>{commission.payout ? commission.payout.recipient : commission.status.includes("PENDING") ? "Awaiting callback" : "No transfer started"}</em></div>
         </section>
       </div>
 
@@ -979,6 +1154,7 @@ interface ReviewProps {
   onSelectFile: (file: File | undefined) => void;
   onApprove: () => void;
   onSubmitReplacement: () => void;
+  liveConfigured: boolean;
 }
 
 function ReviewView({
@@ -992,8 +1168,10 @@ function ReviewView({
   onSelectFile,
   onApprove,
   onSubmitReplacement,
+  liveConfigured,
 }: ReviewProps) {
   const approved = commission.status === "APPROVED" || commission.status === "PAID";
+  const canCommitSelected = commission.status === "FUNDED" && reviewedFile?.source === "local file";
   return (
     <>
       <PageHeader
@@ -1057,9 +1235,12 @@ function ReviewView({
               </div>
             )}
             <div className="review-actions">
-              <button className="button button-secondary full-button" onClick={onVerifyDemo} disabled={isHashing || approved}>
+              {!liveConfigured && <button className="button button-secondary full-button" onClick={onVerifyDemo} disabled={isHashing || approved}>
                 {isHashing ? <RefreshCw className="spin" size={15} /> : <Fingerprint size={15} />} {isHashing ? "Hashing bytes…" : "Verify demo fixture bytes"}
-              </button>
+              </button>}
+              {canCommitSelected && <button className="button button-secondary full-button" onClick={onSubmitReplacement} disabled={isHashing}>
+                <LockKeyhole size={15} /> Commit selected file as delivery v1
+              </button>}
               <button className="button button-primary full-button" onClick={onApprove} disabled={!currentDelivery || !reviewVerified || !reviewMatch || approved || commission.status !== "SUBMITTED"}>
                 <LockKeyhole size={15} /> {approved ? "Approval frozen" : "Approve this exact version"}
               </button>
@@ -1090,9 +1271,10 @@ interface AttackProps {
   blocked: number;
   onRun: (id: string) => void;
   onRunAll: () => void;
+  liveConfigured: boolean;
 }
 
-function AttackLabView({ results, completed, blocked, onRun, onRunAll }: AttackProps) {
+function AttackLabView({ results, completed, blocked, onRun, onRunAll, liveConfigured }: AttackProps) {
   return (
     <>
       <PageHeader
@@ -1124,7 +1306,7 @@ function AttackLabView({ results, completed, blocked, onRun, onRunAll }: AttackP
         </section>
         <aside className="attack-aside">
           <div className="card invariant-card"><div className="invariant-orbit"><div className="orbit-core"><LockKeyhole size={20} /></div><span className="orbit-dot orbit-dot-1" /><span className="orbit-dot orbit-dot-2" /><span className="orbit-dot orbit-dot-3" /></div><span className="section-kicker">THE INVARIANT</span><h3>AI can advise.<br /><em>Only the client can approve.</em></h3><p>Release accepts no recipient or amount from a prompt, invoice, or browser role toggle. It reads immutable terms.</p><div className="invariant-foot"><ShieldCheck size={14} /> enforced below the UI</div></div>
-          <div className="card layers-card"><CardHeader icon={<LayersIcon />} title="Evidence layers" /><div className="layer-row"><span className="layer-dot simulation" /><div><strong>SIMULATION</strong><p>Pure domain rules and local state</p></div></div><div className="layer-row"><span className="layer-dot policy" /><div><strong>LOCAL POLICY</strong><p>Adapter rejects untrusted invoice data</p></div></div><div className="layer-row muted"><span className="layer-dot sandbox" /><div><strong>SANDBOX CONTRACT</strong><p>Next integration milestone</p></div></div></div>
+           <div className="card layers-card"><CardHeader icon={<LayersIcon />} title="Evidence layers" /><div className="layer-row"><span className="layer-dot simulation" /><div><strong>SIMULATION</strong><p>Pure domain rules and local state</p></div></div><div className="layer-row"><span className="layer-dot policy" /><div><strong>LOCAL POLICY</strong><p>Adapter rejects untrusted invoice data</p></div></div><div className="layer-row muted"><span className="layer-dot sandbox" /><div><strong>{liveConfigured ? "NEAR CONTRACT" : "SANDBOX CONTRACT"}</strong><p>{liveConfigured ? "Commission state is read from configured testnet" : "Rust contract covered by near-workspaces tests"}</p></div></div></div>
         </aside>
       </div>
       <div className="disclosure"><CircleAlert size={15} /><span>Attack Lab results are labeled honestly. A blocked simulation is evidence of the local invariant, not proof of a deployed contract transaction.</span></div>
@@ -1141,24 +1323,26 @@ interface EvidenceProps {
   attackResults: Record<string, AttackResult>;
   onDownload: () => void;
   onCopy: () => void;
+  liveConfigured: boolean;
 }
 
-function EvidenceView({ commission, attackResults, onDownload, onCopy }: EvidenceProps) {
+function EvidenceView({ commission, attackResults, onDownload, onCopy, liveConfigured }: EvidenceProps) {
+  const hasTestnetReceipt = commission.payout?.mode === "testnet" && Boolean(commission.payout.transactionHash);
   return (
     <>
       <PageHeader
-        kicker="AUDIT TRAIL / LOCAL LEDGER"
+        kicker={liveConfigured ? `AUDIT TRAIL / ${nearRuntime.network.toUpperCase()} STATE` : "AUDIT TRAIL / LOCAL LEDGER"}
         title="Evidence over theatre."
-        description="Every visible status on this screen comes from the current local state. Export it, inspect it, and know exactly what still needs NEAR sandbox proof."
+        description={liveConfigured ? "Canonical commission state is read from NEAR. Transaction links are shown only when Wallet Selector returns a real finalized receipt." : "Every visible status on this screen comes from the current local state. Export it, inspect it, and know exactly what still needs NEAR sandbox proof."}
         action={<button className="button button-secondary" onClick={onDownload}><Download size={15} /> Download JSON</button>}
       />
       <div className="evidence-grid">
-        <section className="card canonical-card"><CardHeader icon={<Fingerprint size={16} />} title="Canonical commission state" action={<span className="network-pill small-network"><span className="network-dot" /> LOCAL</span>} /><div className="canonical-status"><span className={`large-status-dot ${commission.status.toLowerCase()}`} /><div><span>Current state</span><strong>{statusLabels[commission.status]}</strong></div><span className="canonical-id mono">{commission.id}</span></div><div className="canonical-grid"><DetailItem label="Contract model" value={commission.contractId} icon={<Blocks size={14} />} mono /><DetailItem label="Principal" value={`${commission.amountNear} NEAR`} icon={<Banknote size={14} />} /><DetailItem label="Locked recipient" value={commission.creatorId} icon={<UserRound size={14} />} verified /><DetailItem label="Payout evidence" value={commission.payout?.simulationId ?? "Not settled"} icon={<FileCode2 size={14} />} mono /></div><div className="commitment-lines"><div><span>Brief hash</span><HashValue value={commission.briefHash} /></div>{commission.currentDelivery && <div><span>Delivery v{commission.currentDelivery.version}</span><HashValue value={commission.currentDelivery.hash} /></div>}</div></section>
-        <section className="card export-card"><div className="export-icon"><Download size={18} /></div><span className="section-kicker">REPRODUCIBLE REPORT</span><h3>Take the evidence with you.</h3><p>The downloaded report includes execution layers, before/after states, and the explicit simulation limitation.</p><button className="button button-primary full-button" onClick={onDownload}>Export attack report <Download size={14} /></button><button className="text-button centered-button" onClick={onCopy}><Copy size={13} /> Copy report context</button></section>
+        <section className="card canonical-card"><CardHeader icon={<Fingerprint size={16} />} title="Canonical commission state" action={<span className={`network-pill small-network ${liveConfigured ? "network-live" : ""}`}><span className="network-dot" /> {liveConfigured ? nearRuntime.network.toUpperCase() : "LOCAL"}</span>} /><div className="canonical-status"><span className={`large-status-dot ${commission.status.toLowerCase()}`} /><div><span>Current state</span><strong>{statusLabels[commission.status]}</strong></div><span className="canonical-id mono">{commission.id}</span></div><div className="canonical-grid"><DetailItem label="Contract model" value={commission.contractId} icon={<Blocks size={14} />} mono /><DetailItem label="Principal" value={`${commission.amountNear} NEAR`} icon={<Banknote size={14} />} /><DetailItem label="Locked recipient" value={commission.creatorId} icon={<UserRound size={14} />} verified /><DetailItem label="Payout evidence" value={<ReceiptEvidence payout={commission.payout} />} icon={<FileCode2 size={14} />} mono /></div><div className="commitment-lines"><div><span>Brief hash</span><HashValue value={commission.briefHash} /></div>{commission.currentDelivery && <div><span>Delivery v{commission.currentDelivery.version}</span><HashValue value={commission.currentDelivery.hash} /></div>}</div>{hasTestnetReceipt && <div className="receipt-banner"><BadgeCheck size={15} /><span><strong>Finalized testnet receipt</strong><a href={commission.payout?.explorerUrl} target="_blank" rel="noreferrer">Open on NEARBlocks <ExternalLink size={12} /></a></span></div>}</section>
+         <section className="card export-card"><div className="export-icon"><Download size={18} /></div><span className="section-kicker">REPRODUCIBLE REPORT</span><h3>Take the evidence with you.</h3><p>{liveConfigured ? "The downloaded report includes the configured network, contract ID, receipt evidence, and local Attack Lab results." : "The downloaded report includes execution layers, before/after states, and the explicit simulation limitation."}</p><button className="button button-primary full-button" onClick={onDownload}>Export {liveConfigured ? "chain" : "attack"} report <Download size={14} /></button><button className="text-button centered-button" onClick={onCopy}><Copy size={13} /> Copy report context</button></section>
       </div>
       <section className="card full-timeline-card"><CardHeader icon={<History size={16} />} title="State transition timeline" action={<span className="small-label">{commission.activity.length} EVENTS</span>} /><ActivityTimeline events={commission.activity} /></section>
       <section className="card evidence-results-card"><CardHeader icon={<ShieldCheck size={16} />} title="Attack evidence" action={<span className="small-label">{Object.keys(attackResults).length} RECORDED</span>} />{Object.keys(attackResults).length === 0 ? <EmptyEvidence /> : <div className="evidence-result-list">{Object.values(attackResults).map((result) => <div className="evidence-result-row" key={result.scenarioId}><span className="evidence-check"><Check size={13} /></span><strong>{result.scenarioId}</strong><span className="result-blocked">BLOCKED</span><span>{result.layer}</span><code>{result.evidence}</code></div>)}</div>}</section>
-      <div className="limitation-panel"><ShieldAlert size={17} /><div><strong>What this proves — and what it does not</strong><p>This build proves the commitment rules, mismatch detection, fixed-recipient policy, and replay boundaries in a deterministic local demo. It does not yet prove a NEAR receipt, wallet signature, asynchronous callback, or testnet balance change.</p></div></div>
+       <div className="limitation-panel"><ShieldAlert size={17} /><div><strong>What this proves — and what it does not</strong><p>{liveConfigured ? "This view proves the configured contract state and any linked finalized receipt. Attack Lab remains a local adversarial model; it is not a replacement for a deployed contract transaction." : "This build proves the commitment rules, mismatch detection, fixed-recipient policy, and replay boundaries in a deterministic local demo. It does not yet prove a NEAR receipt, wallet signature, asynchronous callback, or testnet balance change."}</p></div></div>
     </>
   );
 }
@@ -1167,11 +1351,19 @@ function EmptyEvidence() {
   return <div className="empty-evidence"><CircleDashed size={19} /><span>Run Attack Lab checks to populate this ledger.</span></div>;
 }
 
+function ReceiptEvidence({ payout }: { payout: Commission["payout"] }) {
+  if (!payout) return <>Not settled</>;
+  if (payout.mode === "testnet" && payout.transactionHash && payout.explorerUrl) {
+    return <a className="receipt-link" href={payout.explorerUrl} target="_blank" rel="noreferrer">{shortHash(payout.transactionHash, 8)} <ExternalLink size={11} /></a>;
+  }
+  return <>{payout.simulationId ?? "Settled"}</>;
+}
+
 function PageHeader({ kicker, title, description, action }: { kicker: string; title: string; description: string; action?: React.ReactNode }) {
   return <div className="page-header"><div><div className="section-kicker">{kicker}</div><h1>{title}</h1><p>{description}</p></div>{action && <div className="page-header-action">{action}</div>}</div>;
 }
 
-function DetailItem({ icon, label, value, mono, verified }: { icon?: React.ReactNode; label: string; value: string; mono?: boolean; verified?: boolean }) {
+function DetailItem({ icon, label, value, mono, verified }: { icon?: React.ReactNode; label: string; value: React.ReactNode; mono?: boolean; verified?: boolean }) {
   return <div className="detail-item">{icon && <span className="detail-icon">{icon}</span>}<div><span>{label}</span><strong className={mono ? "mono" : ""}>{value} {verified && <BadgeCheck className="inline-check" size={13} />}</strong></div></div>;
 }
 
@@ -1180,7 +1372,7 @@ function CardHeader({ icon, title, action }: { icon: React.ReactNode; title: str
 }
 
 function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
-  return <div className="timeline">{events.map((event, index) => <div className="timeline-item" key={event.id}><div className={`timeline-marker timeline-${event.tone}`}>{event.tone === "success" ? <Check size={12} strokeWidth={3} /> : event.tone === "warning" ? <CircleAlert size={12} /> : <span />}</div><div className="timeline-copy"><div><strong>{event.label}</strong><time>{event.timestamp}</time></div><p>{event.detail}</p></div>{index < events.length - 1 && <div className="timeline-rail" />}</div>)}</div>;
+  return <div className="timeline">{events.map((event, index) => <div className="timeline-item" key={event.id}><div className={`timeline-marker timeline-${event.tone}`}>{event.tone === "success" ? <Check size={12} strokeWidth={3} /> : event.tone === "warning" ? <CircleAlert size={12} /> : <span />}</div><div className="timeline-copy"><div><strong>{event.label}</strong><time>{event.timestamp}</time></div><p>{event.detail}</p>{event.explorerUrl && event.transactionHash && <a className="timeline-receipt" href={event.explorerUrl} target="_blank" rel="noreferrer">Open receipt <ExternalLink size={11} /></a>}</div>{index < events.length - 1 && <div className="timeline-rail" />}</div>)}</div>;
 }
 
 function CheckRow({ label, value, state, warning }: { label: string; value: string; state: boolean; warning?: boolean }) {

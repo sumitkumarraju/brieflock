@@ -18,7 +18,7 @@ Click **Approve this exact version**, return to Overview, and show the stepper m
 
 **45–58 seconds — fixed settlement**
 
-Click **Release payout**. Show the creator account and amount in the timeline. “This local adapter derives the destination from locked terms; it does not accept a recipient from an invoice.” Clarify that this is simulation until the NEAR contract is integrated.
+Click **Release payout**. Show the creator account and amount in the timeline. “This local adapter derives the destination from locked terms; it does not accept a recipient from an invoice.” In a testnet recording, open the linked finalized receipt; in the default recording, keep the simulation label visible.
 
 **58–78 seconds — Attack Lab**
 
@@ -26,11 +26,15 @@ Open Attack Lab and click **Run all checks**. Highlight unauthorized approval, s
 
 **78–90 seconds — honest boundary**
 
-Open Evidence and download the report. “The next integration is the Rust NEAR contract and sandbox test suite. The core product property is already explicit: AI can advise; only the client can approve the exact bytes.”
+Open Evidence and download the report. “The report separates local attack evidence from chain state. The core product property is explicit: AI can advise; only the client can approve the exact bytes.”
 
 ## Recording notes
 
-- Keep the Simulation / Local badge visible.
+- Keep the Simulation / Local badge visible unless recording with an actual configured testnet contract.
 - Do not show invented explorer URLs or transaction hashes.
 - If recording a live file substitution, select a different file and show the mismatch before resetting the demo.
 - Use the report only as local evidence until sandbox and testnet receipts exist.
+
+## Testnet variant
+
+After following [`NEAR_TESTNET.md`](./NEAR_TESTNET.md), configure `VITE_NEAR_CONTRACT_ID`, connect the wallet, and fund a new commission. Select the actual delivery file in **Delivery Review** before signing `submit_delivery`; select the same bytes again for client approval. Release is permissionless but still reads the fixed recipient and amount from the contract. Show the **TESTNET** evidence badge and open the returned NEARBlocks transaction link. Never describe the local Attack Lab checks as testnet transactions.
