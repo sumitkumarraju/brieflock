@@ -29,7 +29,7 @@ export interface ActivityEvent {
   detail: string;
   timestamp: string;
   tone: ActivityTone;
-  executionLayer?: "SIMULATION" | "TESTNET";
+  executionLayer?: "SIMULATION" | "TESTNET" | "MAINNET";
   transactionHash?: string;
   explorerUrl?: string;
 }
@@ -37,7 +37,7 @@ export interface ActivityEvent {
 export interface PayoutRecord {
   amountNear: string;
   recipient: string;
-  mode: "simulation" | "testnet";
+  mode: "simulation" | "testnet" | "mainnet";
   simulationId?: string;
   transactionHash?: string;
   explorerUrl?: string;
@@ -58,6 +58,8 @@ export interface Commission {
   amountYocto: string;
   submitBy: string;
   reviewUntil: string;
+  submitByNs?: string;
+  reviewUntilNs?: string;
   status: CommissionStatus;
   currentDelivery: DeliveryCommitment | null;
   approvedDelivery: DeliveryCommitment | null;

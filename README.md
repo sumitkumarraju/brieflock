@@ -117,3 +117,5 @@ The final application must use factual implementation language and include the h
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+For a separate real-funds deployment, see the [mainnet launch guide](docs/NEAR_MAINNET.md).

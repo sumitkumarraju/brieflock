@@ -84,6 +84,7 @@ function deliveryFromChain(
 export function mapNearMilestone(
   chain: NearMilestoneView,
   previous: Commission | null,
+  network: "mainnet" | "testnet" = "testnet",
 ): Commission {
   const sameMilestone = previous?.id === chain.milestone_id;
   const terminalSettlement = chain.status === "Paid" || chain.status === "Refunded";
@@ -100,17 +101,19 @@ export function mapNearMilestone(
 
   return {
     id: chain.milestone_id,
-    title: (sameMilestone ? previous?.title : undefined) ?? `NEAR testnet commission · ${chain.milestone_id}`,
+    title: (sameMilestone ? previous?.title : undefined) ?? `NEAR ${network} commission · ${chain.milestone_id}`,
     clientId: chain.client_id,
     creatorId: chain.creator_id,
     creatorName: (sameMilestone ? previous?.creatorName : undefined) ?? chain.creator_id,
-    contractId: previous?.contractId ?? "configured testnet contract",
+    contractId: previous?.contractId ?? `configured ${network} contract`,
     brief: (sameMilestone && previous?.briefHash === chain.brief_hash ? previous.brief : undefined) ?? "The canonical brief is represented by the SHA-256 commitment recorded on NEAR.",
     briefHash: chain.brief_hash,
     amountNear: formatNear(chain.amount_yocto),
     amountYocto: chain.amount_yocto,
     submitBy: formatChainDate(chain.submit_by_ns),
     reviewUntil: formatChainDate(chain.review_until_ns),
+    submitByNs: chain.submit_by_ns,
+    reviewUntilNs: chain.review_until_ns,
     status: mapStatus(chain.status),
     currentDelivery,
     approvedDelivery,
@@ -122,7 +125,7 @@ export function mapNearMilestone(
         detail: `${chain.status} · ${chain.milestone_id}`,
         timestamp: "Finalized view",
         tone: chain.status === "Paid" ? "success" : "neutral",
-        executionLayer: "TESTNET",
+        executionLayer: network === "mainnet" ? "MAINNET" : "TESTNET",
       } satisfies ActivityEvent,
       ...(sameMilestone ? previous?.activity.filter((event) => event.id !== "chain-state") ?? [] : []),
     ],

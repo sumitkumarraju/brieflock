@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   BadgeCheck,
@@ -61,6 +61,9 @@ import {
   getExplorerAccountUrl,
   isNearConfigured,
   nearRuntime,
+  nearNetworkLabel,
+  nearWalletHint,
+  verifyNearAccount,
   parseNearToYocto,
   readNearContract,
   showNearWalletModal,
@@ -202,6 +205,18 @@ function App() {
     };
   });
   const [reviewVerified, setReviewVerified] = useState(false);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileSelection = useRef(0);
+  useEffect(() => {
+    if (!previewFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(previewFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [previewFile]);
   const [notice, setNotice] = useState<{ tone: "success" | "warning" | "error"; text: string } | null>(
     null,
   );
@@ -253,8 +268,11 @@ function App() {
         return;
       }
       setLiveStateStatus("available");
-      setCommission((current) => ({ ...mapNearMilestone(chain, current), contractId: nearRuntime.contractId }));
+      setCommission((current) => ({ ...mapNearMilestone(chain, current, nearRuntime.network), contractId: nearRuntime.contractId }));
+      fileSelection.current += 1;
+      setIsHashing(false);
       setReviewedFile(null);
+      setPreviewFile(null);
       setReviewVerified(false);
       showNotice("Finalized state reloaded from the NEAR contract.");
       return chain;
@@ -293,7 +311,7 @@ function App() {
     expectedSigner?: string,
   ) {
     if (!nearAccount) {
-      showNotice("Connect a NEAR testnet wallet before signing this action.", "warning");
+      showNotice(`Connect a NEAR ${nearRuntime.network} wallet before signing this action.`, "warning");
       return;
     }
     if (expectedSigner && nearAccount !== expectedSigner) {
@@ -308,7 +326,7 @@ function App() {
         return;
       }
 
-      const settlement = methodName === "release" || methodName === "refund_expired";
+      const settlement = ["release", "refund_expired", "creator_cancel"].includes(methodName);
       const chain = await syncLiveState();
       const settled = settlement && chain?.status === (methodName === "release" ? "Paid" : "Refunded");
       const receiptActivity = {
@@ -317,7 +335,7 @@ function App() {
         detail: `${receipt.transactionHash}${receipt.blockHash ? ` · block ${receipt.blockHash}` : ""}`,
         timestamp: nowLabel(),
         tone: "success" as const,
-        executionLayer: "TESTNET" as const,
+        executionLayer: nearRuntime.network === "mainnet" ? "MAINNET" as const : "TESTNET" as const,
         transactionHash: receipt.transactionHash,
         explorerUrl: receipt.explorerUrl,
       };
@@ -329,7 +347,7 @@ function App() {
               ? {
                   amountNear: current.amountNear,
                   recipient: methodName === "release" ? current.creatorId : current.clientId,
-                  mode: "testnet",
+                  mode: nearRuntime.network,
                   transactionHash: receipt.transactionHash,
                   explorerUrl: receipt.explorerUrl,
                   blockHash: receipt.blockHash,
@@ -369,6 +387,7 @@ function App() {
           showNotice("Connect the client wallet before funding a NEAR commission.", "warning");
           return;
         }
+        await verifyNearAccount(draft.creatorId);
         const receipt = await signNearContractCall(
           "create_and_fund",
           {
@@ -418,7 +437,7 @@ function App() {
               detail: `${amountYocto} yoctoNEAR principal + storage reserve · ${receipt.transactionHash}`,
               timestamp: nowLabel(),
               tone: "success",
-              executionLayer: "TESTNET",
+              executionLayer: nearRuntime.network === "mainnet" ? "MAINNET" : "TESTNET",
               transactionHash: receipt.transactionHash,
               explorerUrl: receipt.explorerUrl,
             },
@@ -563,9 +582,17 @@ function App() {
 
   async function handleFileSelection(file: File | undefined) {
     if (!file) return;
+    const selection = ++fileSelection.current;
+    setReviewedFile(null);
+    setPreviewFile(null);
+    setReviewVerified(false);
     setIsHashing(true);
     try {
       const hash = await sha256Hex(await file.arrayBuffer());
+      if (selection !== fileSelection.current) return;
+      if (["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(file.type)) {
+        setPreviewFile(file);
+      }
       const matches = currentDelivery?.hash === hash;
       setReviewedFile({
         fileName: file.name,
@@ -584,9 +611,9 @@ function App() {
         matches ? "success" : "warning",
       );
     } catch {
-      showNotice("The file could not be hashed in this browser.", "error");
+      if (selection === fileSelection.current) showNotice("The file could not be hashed in this browser.", "error");
     } finally {
-      setIsHashing(false);
+      if (selection === fileSelection.current) setIsHashing(false);
     }
   }
 
@@ -767,6 +794,17 @@ function App() {
     showNotice("The unapproved principal was returned to the original client.", "warning");
   }
 
+  async function cancelByCreator() {
+    if (!liveConfigured || !["FUNDED", "SUBMITTED"].includes(commission.status)) return;
+    await signLiveAction(
+      "creator_cancel",
+      { milestone_id: commission.id },
+      "1",
+      "Creator cancellation signed.",
+      commission.creatorId,
+    );
+  }
+
   function runAttack(id: string) {
     const result = runAttackScenario(id, commission);
     setAttackResults((current) => ({ ...current, [id]: result }));
@@ -783,7 +821,7 @@ function App() {
     const report = {
       report: "BriefLock Attack Lab",
       generatedAt: new Date().toISOString(),
-      mode: liveConfigured ? "testnet" : "simulation",
+      mode: liveConfigured ? nearRuntime.network : "simulation",
       network: liveConfigured ? nearRuntime.network : "local",
       contractId: liveConfigured ? nearRuntime.contractId : null,
       commissionId: commission.id,
@@ -801,7 +839,7 @@ function App() {
     anchor.download = "brieflock-attack-report.json";
     anchor.click();
     URL.revokeObjectURL(url);
-    showNotice(`Downloaded the current ${liveConfigured ? "testnet" : "simulation"} evidence report.`);
+    showNotice(`Downloaded the current ${liveConfigured ? nearRuntime.network : "simulation"} evidence report.`);
   }
 
   function renderView() {
@@ -812,6 +850,7 @@ function App() {
             commission={commission}
             currentDelivery={currentDelivery}
             reviewedFile={reviewedFile}
+            previewUrl={previewUrl}
             reviewMatch={reviewMatch}
             reviewVerified={reviewVerified}
             isHashing={isHashing}
@@ -851,6 +890,9 @@ function App() {
             onNavigate={navigate}
             onRelease={releasePayout}
             onRefund={refundCommission}
+            onCreatorCancel={cancelByCreator}
+            walletAccount={nearAccount}
+            nearBusy={nearBusy}
             onSubmitReplacement={submitReplacement}
             onReset={resetDemo}
             onShare={() => {
@@ -911,7 +953,7 @@ function App() {
 
         <div className="sidebar-bottom">
           {(!liveConfigured || liveStateStatus === "available") && <div className="side-contract-card">
-            <div className="side-contract-top"><span>{liveConfigured ? "Testnet milestone" : "Demo commission"}</span><span className="mono">{commission.id}</span></div>
+            <div className="side-contract-top"><span>{liveConfigured ? `${nearNetworkLabel} milestone` : "Demo commission"}</span><span className="mono">{commission.id}</span></div>
             <div className="side-contract-title">{liveConfigured ? commission.title : "Kanso Coffee"}</div>
             <StatusPill status={commission.status} />
             <div className="side-contract-meta"><span>Principal</span><strong>{commission.amountNear} NEAR</strong></div>
@@ -996,7 +1038,8 @@ function LiveSetupView({
       <div className="live-setup-mark">{checking ? <RefreshCw className="spin" size={22} /> : hasError ? <CircleAlert size={22} /> : <Blocks size={22} />}</div>
       <span className="section-kicker">{nearRuntime.network.toUpperCase()} / {checking ? "READING CANONICAL STATE" : hasError ? "RPC READ FAILED" : "NO MILESTONE SELECTED"}</span>
       <h1>{checking ? "Reading the contract state." : hasError ? "The chain could not be read." : "Connect a real commission to the dashboard."}</h1>
-      <p>{checking ? `Looking up ${milestoneId} on ${nearRuntime.contractId}.` : hasError ? error : <>No commission named <code>{milestoneId}</code> was found on <code>{nearRuntime.contractId}</code>. This screen will not fall back to local balances while testnet mode is enabled.</>}</p>
+      <p>{checking ? `Looking up ${milestoneId} on ${nearRuntime.contractId}.` : hasError ? error : <>No commission named <code>{milestoneId}</code> was found on <code>{nearRuntime.contractId}</code>. This screen will not fall back to local balances while connected to NEAR {nearRuntime.network}.</>}</p>
+      <p>{nearWalletHint}</p>
       <div className="live-setup-checks">
         <div><span className={connected ? "setup-check ready" : "setup-check"}>{connected ? <Check size={12} /> : <CircleDashed size={12} />}</span><span><strong>Wallet</strong><small>{connected ? "Connected for signing" : "Connect before funding"}</small></span></div>
         <div><span className="setup-check ready"><Check size={12} /></span><span><strong>Contract</strong><small>{nearRuntime.contractId}</small></span></div>
@@ -1027,7 +1070,7 @@ function CreateCommissionModal({
 }) {
   const [draft, setDraft] = useState<CommissionDraft>({
     title: "Kanso Coffee · winter launch poster",
-    creatorId: "studio.kanso.testnet",
+    creatorId: liveConfigured ? "" : "studio.kanso.testnet",
     amountNear: "2.40",
     brief: "Create a 4:5 launch poster for Kanso Coffee's winter menu.\nTone: warm, quiet, editorial.\nInclude the Kanso Coffee wordmark, the line ‘Winter, poured slowly’, and a clear opening date.\nDeliver one PNG, minimum 1600 × 2000 px.",
   });
@@ -1049,8 +1092,8 @@ function CreateCommissionModal({
           <label className="field"><span>Commission name</span><input value={draft.title} onChange={(event) => update("title", event.target.value)} required maxLength={120} /><small>Visible label only; the brief hash is the canonical content commitment.</small></label>
           <div className="form-row"><label className="field"><span>Creator account</span><input value={draft.creatorId} onChange={(event) => update("creatorId", event.target.value)} pattern="^(([a-z0-9]+[\-_])*[a-z0-9]+\.)*([a-z0-9]+[\-_])*[a-z0-9]+$" required /><small>Fixed NEAR account that can submit and receive.</small></label><label className="field amount-field"><span>Principal <em>NEAR</em></span><input inputMode="decimal" value={draft.amountNear} onChange={(event) => update("amountNear", event.target.value)} pattern="^\d+(\.\d+)?$" required /><small>Exact yoctoNEAR conversion; no floating point.</small></label></div>
           <label className="field"><span>Canonical creative brief</span><textarea value={draft.brief} onChange={(event) => update("brief", event.target.value)} rows={6} minLength={20} maxLength={4000} required /><small>Normalized UTF-8 bytes are hashed before funding. Storage reserve: 0.02 NEAR.</small></label>
-          <div className="modal-policy"><ShieldCheck size={16} /><span><strong>{liveConfigured ? "NEAR testnet transaction" : "Simulation record"}</strong>{liveConfigured ? " Wallet approval funds the contract; finalized state replaces browser state." : " No funds move. Set VITE_NEAR_CONTRACT_ID to enable the live path."}</span></div>
-          <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary" disabled={busy}>{busy ? <RefreshCw className="spin" size={15} /> : <WalletCards size={15} />}{busy ? "Waiting for wallet…" : liveConfigured ? "Fund on NEAR testnet" : "Create in simulation"}<ArrowUpRight size={14} /></button></div>
+          <div className="modal-policy"><ShieldCheck size={16} /><span><strong>{liveConfigured ? `NEAR ${nearRuntime.network} transaction` : "Simulation record"}</strong>{liveConfigured ? " Wallet approval funds the contract. On mainnet, this spends real NEAR." : " No funds move. Set VITE_NEAR_CONTRACT_ID to enable the live path."}</span></div>
+          <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary" disabled={busy}>{busy ? <RefreshCw className="spin" size={15} /> : <WalletCards size={15} />}{busy ? "Waiting for wallet…" : liveConfigured ? `Fund on NEAR ${nearRuntime.network}` : "Create in simulation"}<ArrowUpRight size={14} /></button></div>
         </form>
       </section>
     </div>
@@ -1063,6 +1106,9 @@ interface OverviewProps {
   onNavigate: (view: ViewId) => void;
   onRelease: () => void;
   onRefund: () => void;
+  onCreatorCancel: () => void;
+  walletAccount: string | null;
+  nearBusy: boolean;
   onSubmitReplacement: () => void;
   onReset: () => void;
   onShare: () => void;
@@ -1076,6 +1122,9 @@ function OverviewView({
   onNavigate,
   onRelease,
   onRefund,
+  onCreatorCancel,
+  walletAccount,
+  nearBusy,
   onSubmitReplacement,
   onReset,
   onShare,
@@ -1084,6 +1133,10 @@ function OverviewView({
 }: OverviewProps) {
   const isApproved = commission.status === "APPROVED";
   const isSubmitted = commission.status === "SUBMITTED";
+  const unsettled = isSubmitted || commission.status === "FUNDED";
+  const refundAt = isSubmitted ? commission.reviewUntilNs : commission.submitByNs;
+  const canRefundLive = unsettled && walletAccount === commission.clientId &&
+    Boolean(refundAt && BigInt(Date.now()) * 1_000_000n >= BigInt(refundAt));
   return (
     <>
       <PageHeader
@@ -1157,8 +1210,11 @@ function OverviewView({
             <div><strong>{commission.creatorName}</strong><p>Only this account can submit or replace a delivery before approval.</p></div>
           </div>
           <div className="creator-actions">
-            <button className="button button-secondary" onClick={onSubmitReplacement} disabled={!isSubmitted && commission.status !== "FUNDED"}>Submit version {commission.currentDelivery ? 2 : 1} <FileUp size={14} /></button>
-            <button className="button button-quiet danger-button" onClick={onRefund} disabled={!isSubmitted}>Return principal</button>
+            <button className="button button-secondary" onClick={onSubmitReplacement} disabled={!isSubmitted && commission.status !== "FUNDED"}>Submit version {(commission.currentDelivery?.version ?? 0) + 1} <FileUp size={14} /></button>
+            <button className="button button-quiet danger-button" onClick={onRefund} disabled={liveConfigured ? nearBusy || !canRefundLive : !isSubmitted}>{liveConfigured ? "Refund expired milestone" : "Return principal"}</button>
+            {liveConfigured && walletAccount === commission.creatorId && unsettled && (
+              <button className="button button-quiet danger-button" onClick={onCreatorCancel} disabled={nearBusy}>Cancel and return principal</button>
+            )}
           </div>
         </section>
       </div>
@@ -1172,6 +1228,7 @@ interface ReviewProps {
   commission: Commission;
   currentDelivery: DeliveryCommitment | null;
   reviewedFile: ReviewedFile | null;
+  previewUrl: string | null;
   reviewMatch: boolean;
   reviewVerified: boolean;
   isHashing: boolean;
@@ -1186,6 +1243,7 @@ function ReviewView({
   commission,
   currentDelivery,
   reviewedFile,
+  previewUrl,
   reviewMatch,
   reviewVerified,
   isHashing,
@@ -1221,13 +1279,15 @@ function ReviewView({
         <section className="preview-column">
           <div className="preview-card card">
             <div className="preview-card-top"><span className="section-kicker">SELECTED DELIVERY</span><span className="preview-source"><span className="source-dot" /> {reviewedFile?.source ?? "No file"}</span></div>
-            <div className="poster-preview">
+            {previewUrl ? (
+              <img className="delivery-file-preview" src={previewUrl} alt={reviewedFile?.fileName ?? "Selected delivery"} />
+            ) : !liveConfigured && reviewedFile?.source === "demo fixture" ? <div className="poster-preview">
               <div className="poster-grain" />
               <div className="poster-topline"><span>KC / 24</span><span>WINTER MENU</span></div>
               <div className="poster-title"><span>WINTER,</span><strong>POURED<br />SLOWLY</strong></div>
               <div className="poster-circle"><div className="poster-cup" /></div>
               <div className="poster-footer"><span>KANSO COFFEE</span><span>OPENING<br /><strong>06.12</strong></span></div>
-            </div>
+            </div> : null}
             <div className="preview-file-row">
               <div className="file-icon"><FileCode2 size={18} /></div>
               <div className="file-copy"><strong>{reviewedFile?.fileName ?? "Select a delivery file"}</strong><span>{reviewedFile ? `${reviewedFile.mimeType} · ${formatBytes(reviewedFile.sizeBytes)}` : "No bytes selected"}</span></div>
@@ -1276,7 +1336,7 @@ function ReviewView({
           <div className="card rules-card">
             <CardHeader icon={<Sparkles size={16} />} title="Rules-based review" action={<span className="mode-label">NO API KEY</span>} />
             <p>Deterministic checks only. This assistant reports observable facts and never evaluates subjective quality or grants payment authority.</p>
-            <div className="rules-pills"><span><Check size={12} /> PNG delivery</span><span><Check size={12} /> 4:5 brief target</span><span><Check size={12} /> Version bound</span></div>
+            <div className="rules-pills">{reviewedFile && <span>{reviewedFile.mimeType}</span>}{reviewVerified && reviewMatch && <span><Check size={12} /> Exact version verified</span>}</div>
           </div>
 
           <div className="card replacement-card">
@@ -1331,7 +1391,7 @@ function AttackLabView({ results, completed, blocked, onRun, onRunAll, liveConfi
         </section>
         <aside className="attack-aside">
           <div className="card invariant-card"><div className="invariant-orbit"><div className="orbit-core"><LockKeyhole size={20} /></div><span className="orbit-dot orbit-dot-1" /><span className="orbit-dot orbit-dot-2" /><span className="orbit-dot orbit-dot-3" /></div><span className="section-kicker">THE INVARIANT</span><h3>AI can advise.<br /><em>Only the client can approve.</em></h3><p>Release accepts no recipient or amount from a prompt, invoice, or browser role toggle. It reads immutable terms.</p><div className="invariant-foot"><ShieldCheck size={14} /> enforced below the UI</div></div>
-           <div className="card layers-card"><CardHeader icon={<LayersIcon />} title="Evidence layers" /><div className="layer-row"><span className="layer-dot simulation" /><div><strong>SIMULATION</strong><p>Pure domain rules and local state</p></div></div><div className="layer-row"><span className="layer-dot policy" /><div><strong>LOCAL POLICY</strong><p>Adapter rejects untrusted invoice data</p></div></div><div className="layer-row muted"><span className="layer-dot sandbox" /><div><strong>{liveConfigured ? "NEAR CONTRACT" : "SANDBOX CONTRACT"}</strong><p>{liveConfigured ? "Commission state is read from configured testnet" : "Rust contract covered by near-workspaces tests"}</p></div></div></div>
+           <div className="card layers-card"><CardHeader icon={<LayersIcon />} title="Evidence layers" /><div className="layer-row"><span className="layer-dot simulation" /><div><strong>SIMULATION</strong><p>Pure domain rules and local state</p></div></div><div className="layer-row"><span className="layer-dot policy" /><div><strong>LOCAL POLICY</strong><p>Adapter rejects untrusted invoice data</p></div></div><div className="layer-row muted"><span className="layer-dot sandbox" /><div><strong>{liveConfigured ? "NEAR CONTRACT" : "SANDBOX CONTRACT"}</strong><p>{liveConfigured ? "Commission state is read from configured NEAR network" : "Rust contract covered by near-workspaces tests"}</p></div></div></div>
         </aside>
       </div>
       <div className="disclosure"><CircleAlert size={15} /><span>Attack Lab results are labeled honestly. A blocked simulation is evidence of the local invariant, not proof of a deployed contract transaction.</span></div>
@@ -1352,7 +1412,7 @@ interface EvidenceProps {
 }
 
 function EvidenceView({ commission, attackResults, onDownload, onCopy, liveConfigured }: EvidenceProps) {
-  const hasTestnetReceipt = commission.payout?.mode === "testnet" && Boolean(commission.payout.transactionHash);
+  const hasChainReceipt = Boolean(commission.payout?.transactionHash && commission.payout.mode !== "simulation");
   return (
     <>
       <PageHeader
@@ -1362,7 +1422,7 @@ function EvidenceView({ commission, attackResults, onDownload, onCopy, liveConfi
         action={<button className="button button-secondary" onClick={onDownload}><Download size={15} /> Download JSON</button>}
       />
       <div className="evidence-grid">
-        <section className="card canonical-card"><CardHeader icon={<Fingerprint size={16} />} title="Canonical commission state" action={<span className={`network-pill small-network ${liveConfigured ? "network-live" : ""}`}><span className="network-dot" /> {liveConfigured ? nearRuntime.network.toUpperCase() : "LOCAL"}</span>} /><div className="canonical-status"><span className={`large-status-dot ${commission.status.toLowerCase()}`} /><div><span>Current state</span><strong>{statusLabels[commission.status]}</strong></div><span className="canonical-id mono">{commission.id}</span></div><div className="canonical-grid"><DetailItem label="Contract model" value={commission.contractId} icon={<Blocks size={14} />} mono /><DetailItem label="Principal" value={`${commission.amountNear} NEAR`} icon={<Banknote size={14} />} /><DetailItem label="Locked recipient" value={commission.creatorId} icon={<UserRound size={14} />} verified /><DetailItem label="Payout evidence" value={<ReceiptEvidence payout={commission.payout} />} icon={<FileCode2 size={14} />} mono /></div><div className="commitment-lines"><div><span>Brief hash</span><HashValue value={commission.briefHash} /></div>{commission.currentDelivery && <div><span>Delivery v{commission.currentDelivery.version}</span><HashValue value={commission.currentDelivery.hash} /></div>}</div>{hasTestnetReceipt && <div className="receipt-banner"><BadgeCheck size={15} /><span><strong>Finalized testnet receipt</strong><a href={commission.payout?.explorerUrl} target="_blank" rel="noreferrer">Open on NEARBlocks <ExternalLink size={12} /></a></span></div>}</section>
+        <section className="card canonical-card"><CardHeader icon={<Fingerprint size={16} />} title="Canonical commission state" action={<span className={`network-pill small-network ${liveConfigured ? "network-live" : ""}`}><span className="network-dot" /> {liveConfigured ? nearRuntime.network.toUpperCase() : "LOCAL"}</span>} /><div className="canonical-status"><span className={`large-status-dot ${commission.status.toLowerCase()}`} /><div><span>Current state</span><strong>{statusLabels[commission.status]}</strong></div><span className="canonical-id mono">{commission.id}</span></div><div className="canonical-grid"><DetailItem label="Contract model" value={commission.contractId} icon={<Blocks size={14} />} mono /><DetailItem label="Principal" value={`${commission.amountNear} NEAR`} icon={<Banknote size={14} />} /><DetailItem label="Locked recipient" value={commission.creatorId} icon={<UserRound size={14} />} verified /><DetailItem label="Payout evidence" value={<ReceiptEvidence payout={commission.payout} />} icon={<FileCode2 size={14} />} mono /></div><div className="commitment-lines"><div><span>Brief hash</span><HashValue value={commission.briefHash} /></div>{commission.currentDelivery && <div><span>Delivery v{commission.currentDelivery.version}</span><HashValue value={commission.currentDelivery.hash} /></div>}</div>{hasChainReceipt && <div className="receipt-banner"><BadgeCheck size={15} /><span><strong>Finalized {nearRuntime.network} receipt</strong><a href={commission.payout?.explorerUrl} target="_blank" rel="noreferrer">Open on NEARBlocks <ExternalLink size={12} /></a></span></div>}</section>
          <section className="card export-card"><div className="export-icon"><Download size={18} /></div><span className="section-kicker">REPRODUCIBLE REPORT</span><h3>Take the evidence with you.</h3><p>{liveConfigured ? "The downloaded report includes the configured network, contract ID, receipt evidence, and local Attack Lab results." : "The downloaded report includes execution layers, before/after states, and the explicit simulation limitation."}</p><button className="button button-primary full-button" onClick={onDownload}>Export {liveConfigured ? "chain" : "attack"} report <Download size={14} /></button><button className="text-button centered-button" onClick={onCopy}><Copy size={13} /> Copy report context</button></section>
       </div>
       <section className="card full-timeline-card"><CardHeader icon={<History size={16} />} title="State transition timeline" action={<span className="small-label">{commission.activity.length} EVENTS</span>} /><ActivityTimeline events={commission.activity} /></section>
@@ -1378,7 +1438,7 @@ function EmptyEvidence() {
 
 function ReceiptEvidence({ payout }: { payout: Commission["payout"] }) {
   if (!payout) return <>Not settled</>;
-  if (payout.mode === "testnet" && payout.transactionHash && payout.explorerUrl) {
+  if (payout.mode !== "simulation" && payout.transactionHash && payout.explorerUrl) {
     return <a className="receipt-link" href={payout.explorerUrl} target="_blank" rel="noreferrer">{shortHash(payout.transactionHash, 8)} <ExternalLink size={11} /></a>;
   }
   return <>{payout.simulationId ?? "Settled"}</>;

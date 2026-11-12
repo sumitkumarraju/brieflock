@@ -205,3 +205,39 @@ async fn sandbox_rejects_unauthorized_and_stale_approvals() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn sandbox_creator_cancel_returns_principal_to_client() -> Result<()> {
+    let (worker, contract, client, creator, _) = deployed().await?;
+    let now = worker.view_block().await?.timestamp();
+    fund(
+        &contract,
+        &client,
+        &creator,
+        now + 100_000_000_000,
+        now + 200_000_000_000,
+    )
+    .await?;
+
+    let before = client.view_account().await?.balance.as_yoctonear();
+    creator
+        .call(contract.id(), "creator_cancel")
+        .args_json(json!({ "milestone_id": "kanso-001" }))
+        .deposit(NearToken::from_yoctonear(ONE_YOCTO))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+
+    let state: serde_json::Value = contract
+        .view("get_milestone")
+        .args_json(json!({ "milestone_id": "kanso-001" }))
+        .await?
+        .json()?;
+    assert_eq!(state["status"], "Refunded");
+    assert_eq!(
+        client.view_account().await?.balance.as_yoctonear() - before,
+        AMOUNT_YOCTO
+    );
+    Ok(())
+}

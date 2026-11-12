@@ -14,9 +14,17 @@ export interface NearTransactionReceipt {
   explorerUrl: string;
 }
 
-const network = (import.meta.env.VITE_NEAR_NETWORK ?? "testnet") as NearNetwork;
+const configuredNetwork = import.meta.env.VITE_NEAR_NETWORK ?? "testnet";
+if (configuredNetwork !== "testnet" && configuredNetwork !== "mainnet") {
+  throw new Error("VITE_NEAR_NETWORK must be testnet or mainnet.");
+}
+const network: NearNetwork = configuredNetwork;
 const contractId = (import.meta.env.VITE_NEAR_CONTRACT_ID ?? "").trim();
 const milestoneId = (import.meta.env.VITE_NEAR_MILESTONE_ID ?? "kanso-001").trim();
+export const nearNetworkLabel = network === "mainnet" ? "Mainnet" : "Testnet";
+export const nearWalletHint = network === "testnet"
+  ? "Connect a wallet account funded on NEAR testnet. Mainnet accounts do not carry over to testnet."
+  : "Connect the NEAR mainnet account you control. Mainnet payments use real NEAR.";
 
 const rpcUrl =
   network === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org";
@@ -110,7 +118,7 @@ export function parseNearToYocto(value: string): string {
 
 async function getSelector(): Promise<WalletSelector> {
   if (!isNearConfigured()) {
-    throw new Error("Set VITE_NEAR_CONTRACT_ID to enable testnet mode.");
+    throw new Error("Set VITE_NEAR_CONTRACT_ID to enable NEAR wallet actions.");
   }
 
   selectorPromise ??= Promise.all([
@@ -125,7 +133,10 @@ async function getSelector(): Promise<WalletSelector> {
         methodNames: ["submit_delivery", "approve_delivery", "release", "refund_expired", "creator_cancel"],
       },
     }),
-  );
+  ).catch((error) => {
+    selectorPromise = undefined;
+    throw error;
+  });
 
   return selectorPromise;
 }
@@ -137,7 +148,7 @@ export async function showNearWalletModal(): Promise<void> {
     contractId,
     methodNames: ["submit_delivery", "approve_delivery", "release", "refund_expired", "creator_cancel"],
     theme: "light",
-    description: "Sign only the BriefLock action you can authorize.",
+    description: nearWalletHint,
   });
   modalPromise.show();
 }
@@ -172,6 +183,22 @@ function nearProvider() {
   return providerPromise;
 }
 
+export async function verifyNearAccount(accountId: string): Promise<void> {
+  if ((network === "testnet" && accountId.endsWith(".near")) ||
+      (network === "mainnet" && accountId.endsWith(".testnet"))) {
+    throw new Error(`${accountId} is on the other NEAR network. Select a ${network} account.`);
+  }
+  const provider = await nearProvider();
+  try {
+    await provider.viewAccount({ accountId, blockQuery: { finality: "final" } });
+  } catch (error) {
+    if (/UNKNOWN_ACCOUNT|does not exist/i.test(String(error))) {
+      throw new Error(`${accountId} does not exist on NEAR ${network}.`);
+    }
+    throw error;
+  }
+}
+
 export async function disconnectNearWallet(): Promise<void> {
   const selector = await getSelector();
   await (await selector.wallet()).signOut();
@@ -185,8 +212,9 @@ export async function signNearContractCall(
   const selector = await getSelector();
   const { actionCreators } = await import("@near-wallet-selector/core");
   const accountId = selector.store.getState().accounts[0]?.accountId;
-  if (!accountId) throw new Error("Connect a testnet wallet before signing.");
+  if (!accountId) throw new Error(`Connect a NEAR ${network} wallet before signing.`);
 
+  await verifyNearAccount(accountId);
   const wallet = await selector.wallet();
   const outcome = await wallet.signAndSendTransaction({
     signerId: accountId,
@@ -222,7 +250,7 @@ export async function signNearContractCall(
 
 export async function readNearContract<T>(method: string, args: Record<string, unknown>): Promise<T> {
   if (!isNearConfigured()) {
-    throw new Error("Set VITE_NEAR_CONTRACT_ID to read testnet state.");
+    throw new Error("Set VITE_NEAR_CONTRACT_ID to read NEAR contract state.");
   }
   const provider = await nearProvider();
   const response = await provider.callFunctionRaw({ contractId, method, args, blockQuery: { finality: "final" } });

@@ -3101,3 +3101,10 @@ code {
     animation-iteration-count: 1 !important;
   }
 }
+
+.delivery-file-preview {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+}
