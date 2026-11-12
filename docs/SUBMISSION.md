@@ -2,7 +2,7 @@
 
 ## Current factual description
 
-BriefLock is a NEAR creative milestone payment workflow that binds a client-approved brief, an exact delivery-file hash, and one fixed creator account. Its Rust `near-sdk` contract atomically funds immutable terms, lets only the original client approve the current version/hash, freezes approved work, and derives payout amount and recipient from stored state during asynchronous settlement. The React dashboard hashes actual selected bytes and uses Wallet Selector for explicit testnet signing when configured; it also has a credential-free simulation fallback. A deterministic rules-based assistant reports observable metadata without signing or redirecting funds. Attack Lab demonstrates blocked unauthorized approval, stale-version approval, post-approval replacement, invoice recipient redirection, payout replay, and release-before-approval attempts. Unit and `near-workspaces` sandbox tests cover the contract invariants. Testnet deployment and receipts are reported only when a user-controlled account is configured.
+BriefLock is a NEAR creative milestone payment workflow that binds a client-approved brief, an exact delivery-file hash, and one fixed creator account. Its Rust `near-sdk` contract atomically funds immutable terms, lets only the original client approve the current version/hash, freezes approved work, and derives payout amount and recipient from stored state during asynchronous settlement. The React dashboard hashes actual selected bytes and uses Wallet Selector for explicit testnet signing when configured; it also has a credential-free simulation fallback. A deterministic rules-based assistant reports observable metadata without signing or redirecting funds. Attack Lab demonstrates blocked unauthorized approval, stale-version approval, post-approval replacement, invoice recipient redirection, payout replay, and release-before-approval attempts. Unit and `near-workspaces` sandbox tests cover the contract invariants. The deployed testnet contract completed funding, delivery submission, approval and release. The milestone reached Paid and the creator balance increased by exactly 0.1 testnet NEAR. See [transaction evidence](../evidence/testnet-launch.json).
 
 ## Intended form values
 
@@ -18,7 +18,7 @@ BriefLock is a NEAR creative milestone payment workflow that binds a client-appr
 
 ## X post
 
-Built BriefLock at NEAR Hackathon @NEARProtocol. It binds freelance milestone payments to the exact file version a client approves and locks the creator’s payout address. Watch the local demo. #NEARHackathon
+Built BriefLock at NEAR Hackathon @NEARProtocol. It binds freelance milestone payments to the exact file version a client approves and locks the creator’s payout address. Verified on NEAR testnet. #NEARHackathon
 
 https://github.com/sumitkumarraju/brieflock
 

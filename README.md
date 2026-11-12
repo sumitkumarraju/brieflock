@@ -24,7 +24,7 @@ This repository contains a judgeable prototype with a real contract boundary:
 - Wallet Selector v10 integration that activates against NEAR testnet when `VITE_NEAR_CONTRACT_ID` is configured;
 - exact yoctoNEAR amount parsing and testnet explorer/account links.
 
-The default checkout remains credential-free and starts in clearly labeled local simulation mode. No testnet deployment or receipt is claimed until a user-controlled contract account is configured.
+The default checkout remains credential-free and starts in clearly labeled local simulation mode. The release is also deployed and verified on NEAR testnet.
 
 ## Run locally
 
@@ -106,7 +106,11 @@ For the real-chain setup, see [`docs/NEAR_TESTNET.md`](docs/NEAR_TESTNET.md).
 - Project: BriefLock — Verified Delivery, Protected Creator Payments
 - Public repository: <https://github.com/sumitkumarraju/brieflock>
 - Demo post: not published
-- Testnet contract: user-controlled configuration required; no deployment is claimed in this repository
+- Testnet contract: `bl-contract-564b0fcc.testnet`
+- Verified milestone: `launch-1794493183766`
+- Payout: 0.1 testnet NEAR. The recipient balance and final `Paid` state were checked after the transaction.
+- [Payout transaction](https://testnet.nearblocks.io/txns/AQUEpisu4aVAmxV2k7EHvYUnUr8coo8jV1xZPcgonJRG)
+- [Deployment and lifecycle transaction hashes](evidence/testnet-launch.json)
 
 The final application must use factual implementation language and include the human-provided email, team size, mainnet payout account, public repository URL, and public X demo URL. Do not submit placeholders.
 

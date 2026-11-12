@@ -167,7 +167,7 @@ function Stepper({ status }: { status: CommissionStatus }) {
     { key: "PAID", label: "Paid" },
   ];
   const order = ["FUNDED", "SUBMITTED", "APPROVED", "PAID"];
-  const currentIndex = status === "REFUNDED" ? 4 : status === "PAYOUT_PENDING" ? 3 : status === "REFUND_PENDING" ? 4 : order.indexOf(status);
+  const currentIndex = status === "PAYOUT_PENDING" ? 2 : order.indexOf(status);
 
   return (
     <div className="stepper" aria-label="Commission progress">
@@ -253,7 +253,7 @@ function App() {
         return;
       }
       setLiveStateStatus("available");
-      setCommission((current) => mapNearMilestone(chain, current));
+      setCommission((current) => ({ ...mapNearMilestone(chain, current), contractId: nearRuntime.contractId }));
       setReviewedFile(null);
       setReviewVerified(false);
       showNotice("Finalized state reloaded from the NEAR contract.");
@@ -853,6 +853,13 @@ function App() {
             onRefund={refundCommission}
             onSubmitReplacement={submitReplacement}
             onReset={resetDemo}
+            onShare={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.set("milestone", commission.id);
+              void navigator.clipboard.writeText(url.toString())
+                .then(() => showNotice("Milestone link copied."))
+                .catch(() => showNotice("Copy the milestone URL from the address bar.", "warning"));
+            }}
             onNew={() => setCreateOpen(true)}
             liveConfigured={liveConfigured}
           />
@@ -1058,6 +1065,7 @@ interface OverviewProps {
   onRefund: () => void;
   onSubmitReplacement: () => void;
   onReset: () => void;
+  onShare: () => void;
   onNew: () => void;
   liveConfigured: boolean;
 }
@@ -1070,6 +1078,7 @@ function OverviewView({
   onRefund,
   onSubmitReplacement,
   onReset,
+  onShare,
   onNew,
   liveConfigured,
 }: OverviewProps) {
@@ -1081,7 +1090,7 @@ function OverviewView({
         kicker="CREATIVE PAYMENT CONTROL"
         title="Approve the work. Bind the payment."
         description="A single commitment connects the brief, the exact delivery bytes, and the only account allowed to receive the milestone."
-        action={<div className="header-actions"><button className="button button-primary" onClick={onNew}><WalletCards size={15} /> New commission</button><button className="button button-quiet" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></div>}
+        action={<div className="header-actions"><button className="button button-primary" onClick={onNew}><WalletCards size={15} /> New commission</button>{liveConfigured ? <button className="button button-quiet" onClick={onShare}><Copy size={15} /> Copy milestone link</button> : <button className="button button-quiet" onClick={onReset}><RotateCcw size={15} /> Reset demo</button>}</div>}
       />
 
       <div className="trust-strip">
@@ -1132,7 +1141,7 @@ function OverviewView({
         <section className="mini-stats card">
           <div className="mini-stat"><span>Committed file</span><strong>{commission.currentDelivery ? `v${commission.currentDelivery.version}` : "—"}</strong><em>{commission.currentDelivery ? shortHash(commission.currentDelivery.hash, 5) : "No delivery yet"}</em></div>
           <div className="mini-stat"><span>Approval</span><strong>{commission.approvedDelivery ? "Signed" : "Pending"}</strong><em>{commission.approvedDelivery ? `v${commission.approvedDelivery.version} frozen` : "Client action required"}</em></div>
-           <div className="mini-stat"><span>Settlement</span><strong>{commission.payout ? "Confirmed" : commission.status.includes("PENDING") ? "Pending" : "Unreleased"}</strong><em>{commission.payout ? commission.payout.recipient : commission.status.includes("PENDING") ? "Awaiting callback" : "No transfer started"}</em></div>
+           <div className="mini-stat"><span>Settlement</span><strong>{commission.status === "PAID" ? "Confirmed" : commission.status === "REFUNDED" ? "Refunded" : commission.status.includes("PENDING") ? "Pending" : "Unreleased"}</strong><em>{commission.status === "PAID" ? commission.creatorId : commission.status === "REFUNDED" ? commission.clientId : commission.status.includes("PENDING") ? "Awaiting callback" : "No transfer started"}</em></div>
         </section>
       </div>
 
@@ -1145,7 +1154,7 @@ function OverviewView({
           <CardHeader icon={<FileUp size={16} />} title="Creator workspace" action={<span className="small-label">SIGNED BY {commission.creatorId}</span>} />
           <div className="creator-content">
             <div className="creator-avatar">KS</div>
-            <div><strong>Kanso Studio</strong><p>Only this account can submit or replace a delivery before approval.</p></div>
+            <div><strong>{commission.creatorName}</strong><p>Only this account can submit or replace a delivery before approval.</p></div>
           </div>
           <div className="creator-actions">
             <button className="button button-secondary" onClick={onSubmitReplacement} disabled={!isSubmitted && commission.status !== "FUNDED"}>Submit version {commission.currentDelivery ? 2 : 1} <FileUp size={14} /></button>
