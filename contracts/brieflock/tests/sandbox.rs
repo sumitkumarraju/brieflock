@@ -1,5 +1,5 @@
 use anyhow::Result;
-use near_workspaces::types::NearToken;
+use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, Contract, Worker};
 use serde_json::json;
 
@@ -101,7 +101,7 @@ async fn sandbox_normal_flow_pays_exact_fixed_creator_once() -> Result<()> {
             "version": "1",
             "delivery_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }))
-        .max_gas()
+        .gas(Gas::from_tgas(100))
         .transact()
         .await?
         .into_result()?;

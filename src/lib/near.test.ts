@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractNearReceipt,
   formatNearError,
+  gasForNearMethod,
   getExplorerTransactionUrl,
   nearRuntime,
   parseNearToYocto,
@@ -35,6 +36,7 @@ describe("NEAR runtime helpers", () => {
     expect(
       extractNearReceipt({
         final_execution_status: "FINAL",
+        status: { SuccessValue: "" },
         transaction: { hash: "9x-real-tx" },
         transaction_outcome: { id: "9x-real-tx", block_hash: "block-7" },
       }),
@@ -43,10 +45,26 @@ describe("NEAR runtime helpers", () => {
       blockHash: "block-7",
       finalStatus: "FINAL",
       succeeded: true,
+      failed: false,
       explorerUrl: "https://testnet.nearblocks.io/txns/9x-real-tx",
     });
     expect(extractNearReceipt(undefined)).toBeNull();
     expect(extractNearReceipt({ final_execution_status: "FINAL" })).toBeNull();
+  });
+
+  it("keeps wallet hashes pending until a final successful result exists", () => {
+    const transaction = { hash: "pending-tx" };
+    expect(extractNearReceipt({ transaction })).toMatchObject({ succeeded: false, failed: false });
+    expect(extractNearReceipt({ transaction, final_execution_status: "FINAL" })).toMatchObject({ succeeded: false });
+    expect(extractNearReceipt({ transaction, status: { SuccessValue: "" }, final_execution_status: "EXECUTED" }))
+      .toMatchObject({ succeeded: false });
+  });
+
+  it("budgets extra gas for settlement and its callback", () => {
+    for (const method of ["release", "refund_expired", "creator_cancel"]) {
+      expect(gasForNearMethod(method)).toBe(100_000_000_000_000n);
+    }
+    expect(gasForNearMethod("approve_delivery")).toBe(30_000_000_000_000n);
   });
 
   it("marks a finalized failed transaction as failed instead of a payout receipt", () => {

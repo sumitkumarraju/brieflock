@@ -61,15 +61,14 @@ export function runAttackScenario(
   commission: Commission,
 ): AttackResult {
   let result: { allowed: boolean; reason: string };
+  let startingStatus = commission.status;
 
   switch (scenarioId) {
     case "A01": {
-      const check = canApprove(
-        commission,
-        "attacker.testnet",
-        commission.currentDelivery?.version ?? 1,
-        commission.currentDelivery?.hash ?? "",
-      );
+      const delivery = createDelivery(1);
+      const submitted = { ...cloneWithStatus(commission, "SUBMITTED"), currentDelivery: delivery };
+      startingStatus = submitted.status;
+      const check = canApprove(submitted, "attacker.testnet", delivery.version, delivery.hash);
       result = check;
       break;
     }
@@ -79,6 +78,7 @@ export function runAttackScenario(
         status: "SUBMITTED",
         currentDelivery: createDelivery(2),
       };
+      startingStatus = upgraded.status;
       const check = canApprove(
         upgraded,
         upgraded.clientId,
@@ -90,6 +90,7 @@ export function runAttackScenario(
     }
     case "A03": {
       const approved = cloneWithStatus(commission, "APPROVED");
+      startingStatus = approved.status;
       result = canReplaceDelivery(approved, approved.creatorId);
       break;
     }
@@ -97,7 +98,8 @@ export function runAttackScenario(
       result = validateInvoiceRecipient(commission.creatorId, "attacker.testnet");
       break;
     case "A06": {
-      const paid = cloneWithStatus(commission, "PAID");
+      const paid = { ...cloneWithStatus(commission, "PAID"), approvedDelivery: createDelivery(1) };
+      startingStatus = paid.status;
       result = canRelease(
         paid,
         paid.approvedDelivery?.version ?? 1,
@@ -107,9 +109,9 @@ export function runAttackScenario(
     }
     case "A08":
       result = canRelease(
-        commission,
-        commission.currentDelivery?.version ?? 1,
-        commission.currentDelivery?.hash ?? "",
+        cloneWithStatus(commission, "FUNDED"),
+        1,
+        createDelivery(1).hash,
       );
       break;
     default:
@@ -124,8 +126,8 @@ export function runAttackScenario(
     actual: result.allowed ? "allowed" : "blocked",
     layer: scenarioId === "A05" ? "LOCAL POLICY" : "SIMULATION",
     reason: result.reason,
-    before: commission.status,
-    after: commission.status,
+    before: startingStatus,
+    after: startingStatus,
     evidence: `SIM-${scenarioId}-${result.allowed ? "ALLOW" : "BLOCK"}`,
     ranAt: new Date().toISOString(),
   };

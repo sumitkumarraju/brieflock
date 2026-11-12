@@ -8,20 +8,18 @@ BriefLock is a NEAR creative milestone payment workflow that binds a client-appr
 
 - Project name: `BriefLock — Verified Delivery, Protected Creator Payments`
 - Tracks: `security`, `realworld`
-- Lead name: `Sumit Kumar Raju` (confirm before submission)
+- Lead name: `Sumit Kumar Raju`
 - Team size: human-provided, not inferred
 - Email: human-provided, not inferred for the form
 - Mainnet NEAR payout address: human-provided; never use a testnet account or invent one
 - Public repository: <https://github.com/sumitkumarraju/brieflock>
-- Demo post: human must publish the X post; this assistant does not post on the user’s behalf
-- Consent: must be explicitly confirmed before submitting
+- Demo post: pending publication
+- Contact consent: form field
 
-## X draft
+## X post
 
-Creative work needs more than a payment button: it needs the approved brief, the exact file version, and the right creator to stay bound together.
+Built BriefLock at NEAR Hackathon @NEARProtocol. It binds freelance milestone payments to the exact file version a client approves and locks the creator’s payout address. Watch the local demo. #NEARHackathon
 
-We built BriefLock at @NEARProtocol Hackathon: a policy-bound milestone payment workflow where AI can review observable facts, but only the client can approve the exact delivery bytes. Attack Lab demonstrates stale-version, invoice-redirection, unauthorized-approval, and replay defenses.
+https://github.com/sumitkumarraju/brieflock
 
-@NEARProtocol #NEARHackathon
-
-Add the real public repository and demo media before posting. Do not claim testnet receipts until they exist.
+Attach the launch video before publishing. Paste the public X post URL into the hackathon form.

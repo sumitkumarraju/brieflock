@@ -13,7 +13,7 @@
     "test:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo test --manifest-path contracts/brieflock/Cargo.toml --lib",
     "test:sandbox": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release && cargo test --manifest-path contracts/brieflock/Cargo.toml --test sandbox",
     "build:contract": "source $HOME/.cargo/env 2>/dev/null || true; cargo build --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release",
-    "demo:attacks": "node scripts/demo-attacks.mjs"
+    "demo:attacks": "vite-node scripts/demo-attacks.ts"
   },
   "dependencies": {
     "@near-wallet-selector/core": "^10.1.4",

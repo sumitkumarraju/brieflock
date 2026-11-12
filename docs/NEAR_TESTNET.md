@@ -45,7 +45,9 @@ The dashboard then:
 3. hashes delivery bytes in the browser;
 4. signs `submit_delivery` and `approve_delivery` with exactly one yoctoNEAR;
 5. calls `release` without a recipient or amount argument;
-6. re-reads finalized `get_milestone` state after returned receipts.
+6. waits for a final transaction outcome and re-reads finalized `get_milestone` state before displaying payout or refund evidence.
+
+After funding, share the dashboard URL containing `?milestone=<id>` with the creator. Exchange the actual file through your existing delivery channel. Use **Disconnect** to switch between client and creator wallets.
 
 ## 4. Direct read-only verification
 

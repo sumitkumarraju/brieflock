@@ -56,6 +56,7 @@ import {
 } from "./lib/attackLab";
 import { formatBytes, normalizeBrief, sha256Hex, shortHash } from "./lib/hash";
 import {
+  disconnectNearWallet,
   formatNearError,
   getExplorerAccountUrl,
   isNearConfigured,
@@ -209,7 +210,7 @@ function App() {
   const [isHashing, setIsHashing] = useState(false);
   const [nearAccount, setNearAccount] = useState<string | null>(null);
   const [nearBusy, setNearBusy] = useState(false);
-  const [activeMilestoneId, setActiveMilestoneId] = useState(nearRuntime.milestoneId);
+  const [activeMilestoneId, setActiveMilestoneId] = useState(() => new URLSearchParams(window.location.search).get("milestone") || nearRuntime.milestoneId);
   const [createOpen, setCreateOpen] = useState(false);
   const liveConfigured = isNearConfigured();
   const [liveStateStatus, setLiveStateStatus] = useState<"checking" | "available" | "missing" | "error">(liveConfigured ? "checking" : "available");
@@ -256,6 +257,7 @@ function App() {
       setReviewedFile(null);
       setReviewVerified(false);
       showNotice("Finalized state reloaded from the NEAR contract.");
+      return chain;
     } catch (error) {
       setLiveStateStatus("error");
       setLiveStateError(formatNearError(error));
@@ -307,6 +309,8 @@ function App() {
       }
 
       const settlement = methodName === "release" || methodName === "refund_expired";
+      const chain = await syncLiveState();
+      const settled = settlement && chain?.status === (methodName === "release" ? "Paid" : "Refunded");
       const receiptActivity = {
         id: `tx-${receipt.transactionHash}`,
         label: `${successMessage.replace(" signed.", "")} finalized`,
@@ -321,7 +325,7 @@ function App() {
         addActivity(
           {
             ...current,
-            payout: settlement
+            payout: settled
               ? {
                   amountNear: current.amountNear,
                   recipient: methodName === "release" ? current.creatorId : current.clientId,
@@ -336,8 +340,11 @@ function App() {
           receiptActivity,
         ),
       );
-      showNotice(`${successMessage} finalized. Re-reading canonical state.`);
-      await syncLiveState();
+      if (settlement && !settled) {
+        showNotice(chain?.last_settlement_error ?? "The transaction was finalized. Refresh to confirm settlement state.", "warning");
+      } else if (chain) {
+        showNotice(`${successMessage.replace(" signed.", "")} confirmed on NEAR.`);
+      }
     } catch (error) {
       showNotice(formatNearError(error), "error");
     } finally {
@@ -379,6 +386,9 @@ function App() {
           return;
         }
         setActiveMilestoneId(milestoneId);
+        const milestoneUrl = new URL(window.location.href);
+        milestoneUrl.searchParams.set("milestone", milestoneId);
+        window.history.replaceState(null, "", milestoneUrl);
         setCreateOpen(false);
         setCommission((current) =>
           addActivity(
@@ -912,11 +922,14 @@ function App() {
           <button className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19} /></button>
           <div className="breadcrumbs"><span>BriefLock</span><ChevronRight size={13} /><strong>{navItems.find((item) => item.id === activeView)?.label}</strong></div>
           <div className="topbar-actions">
-            <span className={`network-pill ${nearAccount ? "network-live" : ""}`}><span className="network-dot" /> {nearAccount ? `${nearRuntime.network.toUpperCase()} · CHAIN` : liveConfigured ? `${nearRuntime.network.toUpperCase()} · READY` : "SIMULATION · LOCAL"}</span>
+            <span data-network={liveConfigured ? nearRuntime.network.toUpperCase() : "LOCAL"} className={`network-pill ${nearAccount ? "network-live" : ""}`}><span className="network-dot" /> {nearAccount ? `${nearRuntime.network.toUpperCase()} · CHAIN` : liveConfigured ? `${nearRuntime.network.toUpperCase()} · READY` : "SIMULATION · LOCAL"}</span>
             <button className="wallet-button" onClick={connectNearWallet} disabled={nearBusy}>
               <WalletCards size={15} />
               {nearAccount ? <span className="wallet-account">{nearAccount}</span> : liveConfigured ? "Connect wallet" : "Testnet wallet"}
             </button>
+            {nearAccount && <button className="text-button" disabled={nearBusy} onClick={() => {
+              void disconnectNearWallet().catch((error) => showNotice(formatNearError(error), "error"));
+            }}>Disconnect</button>}
             {nearAccount && <a className="icon-button top-icon" href={getExplorerAccountUrl(nearAccount)} target="_blank" rel="noreferrer" aria-label="Open account on explorer"><ExternalLink size={16} /></a>}
             <button className="icon-button top-icon" aria-label="View contract model"><Code2 size={17} /></button>
             <div className="top-avatar">SK</div>
@@ -933,6 +946,7 @@ function App() {
           )}
           {liveConfigured && liveStateStatus !== "available" ? (
             <LiveSetupView
+              milestoneId={activeMilestoneId}
               busy={nearBusy}
               connected={Boolean(nearAccount)}
               error={liveStateError}
@@ -950,6 +964,7 @@ function App() {
 }
 
 function LiveSetupView({
+  milestoneId,
   busy,
   connected,
   error,
@@ -958,6 +973,7 @@ function LiveSetupView({
   onNew,
   onRefresh,
 }: {
+  milestoneId: string;
   busy: boolean;
   connected: boolean;
   error: string | null;
@@ -973,7 +989,7 @@ function LiveSetupView({
       <div className="live-setup-mark">{checking ? <RefreshCw className="spin" size={22} /> : hasError ? <CircleAlert size={22} /> : <Blocks size={22} />}</div>
       <span className="section-kicker">{nearRuntime.network.toUpperCase()} / {checking ? "READING CANONICAL STATE" : hasError ? "RPC READ FAILED" : "NO MILESTONE SELECTED"}</span>
       <h1>{checking ? "Reading the contract state." : hasError ? "The chain could not be read." : "Connect a real commission to the dashboard."}</h1>
-      <p>{checking ? `Looking up ${nearRuntime.milestoneId} on ${nearRuntime.contractId}.` : hasError ? error : <>No commission named <code>{nearRuntime.milestoneId}</code> was found on <code>{nearRuntime.contractId}</code>. This screen will not fall back to local balances while testnet mode is enabled.</>}</p>
+      <p>{checking ? `Looking up ${milestoneId} on ${nearRuntime.contractId}.` : hasError ? error : <>No commission named <code>{milestoneId}</code> was found on <code>{nearRuntime.contractId}</code>. This screen will not fall back to local balances while testnet mode is enabled.</>}</p>
       <div className="live-setup-checks">
         <div><span className={connected ? "setup-check ready" : "setup-check"}>{connected ? <Check size={12} /> : <CircleDashed size={12} />}</span><span><strong>Wallet</strong><small>{connected ? "Connected for signing" : "Connect before funding"}</small></span></div>
         <div><span className="setup-check ready"><Check size={12} /></span><span><strong>Contract</strong><small>{nearRuntime.contractId}</small></span></div>
@@ -1024,7 +1040,7 @@ function CreateCommissionModal({
         <div className="modal-header"><div><span className="section-kicker">NEW COMMISSION / IMMUTABLE TERMS</span><h2 id="create-commission-title">Fund a protected milestone.</h2><p>Lock the brief, recipient, amount, and review boundaries before a file exists.</p></div><button className="icon-button" onClick={onClose} aria-label="Close new commission"><X size={17} /></button></div>
         <form onSubmit={submit} className="commission-form">
           <label className="field"><span>Commission name</span><input value={draft.title} onChange={(event) => update("title", event.target.value)} required maxLength={120} /><small>Visible label only; the brief hash is the canonical content commitment.</small></label>
-          <div className="form-row"><label className="field"><span>Creator account</span><input value={draft.creatorId} onChange={(event) => update("creatorId", event.target.value)} pattern="^(([a-z0-9]+[-_])*[a-z0-9]+\.)*([a-z0-9]+[-_])*[a-z0-9]+$" required /><small>Fixed NEAR account that can submit and receive.</small></label><label className="field amount-field"><span>Principal <em>NEAR</em></span><input inputMode="decimal" value={draft.amountNear} onChange={(event) => update("amountNear", event.target.value)} pattern="^\d+(\.\d+)?$" required /><small>Exact yoctoNEAR conversion; no floating point.</small></label></div>
+          <div className="form-row"><label className="field"><span>Creator account</span><input value={draft.creatorId} onChange={(event) => update("creatorId", event.target.value)} pattern="^(([a-z0-9]+[\-_])*[a-z0-9]+\.)*([a-z0-9]+[\-_])*[a-z0-9]+$" required /><small>Fixed NEAR account that can submit and receive.</small></label><label className="field amount-field"><span>Principal <em>NEAR</em></span><input inputMode="decimal" value={draft.amountNear} onChange={(event) => update("amountNear", event.target.value)} pattern="^\d+(\.\d+)?$" required /><small>Exact yoctoNEAR conversion; no floating point.</small></label></div>
           <label className="field"><span>Canonical creative brief</span><textarea value={draft.brief} onChange={(event) => update("brief", event.target.value)} rows={6} minLength={20} maxLength={4000} required /><small>Normalized UTF-8 bytes are hashed before funding. Storage reserve: 0.02 NEAR.</small></label>
           <div className="modal-policy"><ShieldCheck size={16} /><span><strong>{liveConfigured ? "NEAR testnet transaction" : "Simulation record"}</strong>{liveConfigured ? " Wallet approval funds the contract; finalized state replaces browser state." : " No funds move. Set VITE_NEAR_CONTRACT_ID to enable the live path."}</span></div>
           <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary" disabled={busy}>{busy ? <RefreshCw className="spin" size={15} /> : <WalletCards size={15} />}{busy ? "Waiting for wallet…" : liveConfigured ? "Fund on NEAR testnet" : "Create in simulation"}<ArrowUpRight size={14} /></button></div>

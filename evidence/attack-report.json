@@ -1,51 +1,74 @@
 {
   "report": "BriefLock Attack Lab",
-  "generatedAt": "2026-11-02T18:52:35.898Z",
+  "generatedAt": "2026-11-12T14:05:34.787Z",
   "mode": "simulation",
-  "network": "local",
   "scenarios": [
     {
-      "scenarioId": "A01",
       "title": "Unauthorized approval",
+      "scenarioId": "A01",
       "actual": "blocked",
       "layer": "SIMULATION",
-      "evidence": "SIM-A01-BLOCK"
+      "reason": "Only the original client can approve this commission.",
+      "before": "SUBMITTED",
+      "after": "SUBMITTED",
+      "evidence": "SIM-A01-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.785Z"
     },
     {
-      "scenarioId": "A02",
       "title": "Stale version approval",
+      "scenarioId": "A02",
       "actual": "blocked",
       "layer": "SIMULATION",
-      "evidence": "SIM-A02-BLOCK"
+      "reason": "The reviewed version is stale or its bytes do not match the current submission.",
+      "before": "SUBMITTED",
+      "after": "SUBMITTED",
+      "evidence": "SIM-A02-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.786Z"
     },
     {
-      "scenarioId": "A03",
       "title": "Replace after approval",
+      "scenarioId": "A03",
       "actual": "blocked",
       "layer": "SIMULATION",
-      "evidence": "SIM-A03-BLOCK"
+      "reason": "Approved work is frozen and cannot be replaced.",
+      "before": "APPROVED",
+      "after": "APPROVED",
+      "evidence": "SIM-A03-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.786Z"
     },
     {
-      "scenarioId": "A05",
       "title": "Invoice recipient redirect",
+      "scenarioId": "A05",
       "actual": "blocked",
       "layer": "LOCAL POLICY",
-      "evidence": "SIM-A05-BLOCK"
+      "reason": "Invoice recipient attacker.testnet does not match the locked creator studio.kanso.testnet.",
+      "before": "SUBMITTED",
+      "after": "SUBMITTED",
+      "evidence": "SIM-A05-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.786Z"
     },
     {
-      "scenarioId": "A06",
       "title": "Replay completed payout",
+      "scenarioId": "A06",
       "actual": "blocked",
       "layer": "SIMULATION",
-      "evidence": "SIM-A06-BLOCK"
+      "reason": "A payout cannot begin until the client has approved a delivery.",
+      "before": "PAID",
+      "after": "PAID",
+      "evidence": "SIM-A06-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.786Z"
     },
     {
-      "scenarioId": "A08",
       "title": "Release before approval",
+      "scenarioId": "A08",
       "actual": "blocked",
       "layer": "SIMULATION",
-      "evidence": "SIM-A08-BLOCK"
+      "reason": "A payout cannot begin until the client has approved a delivery.",
+      "before": "SUBMITTED",
+      "after": "SUBMITTED",
+      "evidence": "SIM-A08-BLOCK",
+      "ranAt": "2026-11-12T14:05:34.786Z"
     }
   ],
-  "limitation": "This report records deterministic local checks. It is not a blockchain receipt and must not be presented as testnet evidence."
+  "limitation": "Local checks only. No NEAR transactions were sent."
 }

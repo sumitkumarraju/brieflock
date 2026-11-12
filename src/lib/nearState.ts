@@ -49,7 +49,7 @@ function formatNear(yocto: string): string {
   const value = BigInt(yocto);
   const base = 10n ** 24n;
   const whole = value / base;
-  const fraction = (value % base).toString().padStart(24, "0").slice(0, 2);
+  const fraction = (value % base).toString().padStart(24, "0").replace(/0+$/, "").padEnd(2, "0");
   return `${whole}.${fraction}`;
 }
 
@@ -100,12 +100,12 @@ export function mapNearMilestone(
 
   return {
     id: chain.milestone_id,
-    title: previous?.title ?? `NEAR testnet commission · ${chain.milestone_id}`,
+    title: (sameMilestone ? previous?.title : undefined) ?? `NEAR testnet commission · ${chain.milestone_id}`,
     clientId: chain.client_id,
     creatorId: chain.creator_id,
-    creatorName: previous?.creatorName ?? chain.creator_id,
+    creatorName: (sameMilestone ? previous?.creatorName : undefined) ?? chain.creator_id,
     contractId: previous?.contractId ?? "configured testnet contract",
-    brief: previous?.brief ?? "The canonical brief is represented by the SHA-256 commitment recorded on NEAR.",
+    brief: (sameMilestone && previous?.briefHash === chain.brief_hash ? previous.brief : undefined) ?? "The canonical brief is represented by the SHA-256 commitment recorded on NEAR.",
     briefHash: chain.brief_hash,
     amountNear: formatNear(chain.amount_yocto),
     amountYocto: chain.amount_yocto,

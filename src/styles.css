@@ -2787,6 +2787,27 @@ code {
     padding: 0 14px;
   }
 
+  .topbar-actions {
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .topbar .top-avatar,
+  .topbar .top-icon {
+    display: none;
+  }
+
+  .topbar .wallet-button {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .topbar .wallet-account {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .network-pill {
     padding: 6px;
     font-size: 0;
@@ -2797,7 +2818,7 @@ code {
   }
 
   .network-pill::after {
-    content: "LOCAL";
+    content: attr(data-network);
     font-size: 8px;
   }
 

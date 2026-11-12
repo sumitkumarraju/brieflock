@@ -1,0 +1,33 @@
+name: Verify BriefLock
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run demo:attacks
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable && rustup target add wasm32-unknown-unknown
+      - run: cargo test --locked --manifest-path contracts/brieflock/Cargo.toml --lib
+      - run: cargo build --locked --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release
+      - run: cargo test --locked --manifest-path contracts/brieflock/Cargo.toml --test sandbox

@@ -28,7 +28,7 @@ The default checkout remains credential-free and starts in clearly labeled local
 
 ## Run locally
 
-Requirements: Node.js 20+.
+Requirements: Node.js 22.12+ or Node.js 24.
 
 ```sh
 npm ci
@@ -74,13 +74,14 @@ npm test
 npm run build
 npm run demo:attacks
 npm run demo:attacks -- --write-report
+npx playwright install chromium
 npm run test:e2e
 npm run test:contract
 npm run test:sandbox
 npm run build:contract
 ```
 
-The baseline unit, contract, sandbox, and browser tests require no paid AI service. Testnet deployment requires a user-controlled account and wallet.
+The baseline unit, contract, sandbox, and browser tests require no paid AI service. The contract commands require Rust and the `wasm32-unknown-unknown` target. The Attack Lab CLI runs the same local policies as the dashboard. Testnet deployment requires a user-controlled account and wallet.
 
 ## Why NEAR
 

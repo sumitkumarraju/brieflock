@@ -9,6 +9,7 @@ export interface NearTransactionReceipt {
   blockHash?: string;
   finalStatus?: string;
   succeeded: boolean;
+  failed: boolean;
   errorMessage?: string;
   explorerUrl: string;
 }
@@ -72,14 +73,16 @@ export function extractNearReceipt(outcome: unknown): NearTransactionReceipt | n
   const status = asRecord(root.status);
   const statusFailure = asRecord(status?.Failure);
   const failed = root.status === "Failure" || Boolean(statusFailure);
+  const finalStatus = stringField(root, "final_execution_status");
 
   return {
     transactionHash,
     blockHash:
       stringField(transactionOutcome, "block_hash") ??
       stringField(outcomeDetails, "block_hash"),
-    finalStatus: stringField(root, "final_execution_status"),
-    succeeded: !failed,
+    finalStatus,
+    succeeded: finalStatus === "FINAL" && typeof status?.SuccessValue === "string",
+    failed,
     errorMessage: stringField(statusFailure, "error_message"),
     explorerUrl: getExplorerTransactionUrl(transactionHash),
   };
@@ -157,6 +160,23 @@ export async function subscribeToNearAccounts(
   return () => subscription.unsubscribe();
 }
 
+export function gasForNearMethod(method: string): bigint {
+  // Settlement needs room for its 30 Tgas callback and the transfer setup.
+  return ["release", "refund_expired", "creator_cancel"].includes(method)
+    ? 100_000_000_000_000n
+    : 30_000_000_000_000n;
+}
+
+function nearProvider() {
+  providerPromise ??= import("near-api-js").then(({ JsonRpcProvider }) => new JsonRpcProvider({ url: rpcUrl }));
+  return providerPromise;
+}
+
+export async function disconnectNearWallet(): Promise<void> {
+  const selector = await getSelector();
+  await (await selector.wallet()).signOut();
+}
+
 export async function signNearContractCall(
   methodName: string,
   args: Record<string, unknown>,
@@ -175,14 +195,27 @@ export async function signNearContractCall(
       actionCreators.functionCall(
         methodName,
         args,
-        BigInt("30000000000000"),
+        gasForNearMethod(methodName),
         BigInt(depositYocto),
       ),
     ],
   });
-  const receipt = extractNearReceipt(outcome);
-  if (receipt && !receipt.succeeded) {
+  let receipt = extractNearReceipt(outcome);
+  if (receipt && !receipt.failed && !receipt.succeeded) {
+    const txHash = receipt.transactionHash;
+    try {
+      const provider = await nearProvider();
+      const finalized = await provider.viewTransactionStatus({ txHash, accountId, waitUntil: "FINAL" });
+      receipt = extractNearReceipt(finalized);
+    } catch {
+      throw new Error(`Could not confirm transaction ${txHash}. Check the explorer and refresh before retrying.`);
+    }
+  }
+  if (receipt?.failed) {
     throw new Error(receipt.errorMessage ?? `NEAR transaction ${receipt.transactionHash} failed.`);
+  }
+  if (receipt && !receipt.succeeded) {
+    throw new Error(`Transaction ${receipt.transactionHash} is awaiting a confirmed outcome. Refresh before retrying.`);
   }
   return receipt;
 }
@@ -191,8 +224,7 @@ export async function readNearContract<T>(method: string, args: Record<string, u
   if (!isNearConfigured()) {
     throw new Error("Set VITE_NEAR_CONTRACT_ID to read testnet state.");
   }
-  providerPromise ??= import("near-api-js").then(({ JsonRpcProvider }) => new JsonRpcProvider({ url: rpcUrl }));
-  const provider = await providerPromise;
-  const response = await provider.callFunctionRaw({ contractId, method, args });
+  const provider = await nearProvider();
+  const response = await provider.callFunctionRaw({ contractId, method, args, blockQuery: { finality: "final" } });
   return JSON.parse(new TextDecoder().decode(new Uint8Array(response.result))) as T;
 }
