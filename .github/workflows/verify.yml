@@ -31,3 +31,8 @@ jobs:
       - run: cargo test --locked --manifest-path contracts/brieflock/Cargo.toml --lib
       - run: cargo build --locked --manifest-path contracts/brieflock/Cargo.toml --target wasm32-unknown-unknown --release
       - run: cargo test --locked --manifest-path contracts/brieflock/Cargo.toml --test sandbox
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brieflock-contract-testnet
+          path: contracts/brieflock/target/wasm32-unknown-unknown/release/brieflock_contract.wasm
+          if-no-files-found: error
