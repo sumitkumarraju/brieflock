@@ -26,11 +26,13 @@ export const nearWalletHint = network === "testnet"
   ? "Connect a wallet account funded on NEAR testnet. Mainnet accounts do not carry over to testnet."
   : "Connect the NEAR mainnet account you control. Mainnet payments use real NEAR.";
 
-const rpcUrl =
-  network === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org";
+const rpcUrls = network === "mainnet"
+  ? ["https://free.rpc.fastnear.com", "https://archival-rpc.mainnet.near.org"]
+  : ["https://rpc.testnet.fastnear.com", "https://rpc.testnet.near.org"];
+const rpcUrl = rpcUrls[0];
 const explorerUrl = network === "mainnet" ? "https://nearblocks.io" : "https://testnet.nearblocks.io";
 
-let providerPromise: Promise<import("near-api-js").JsonRpcProvider> | undefined;
+let providerPromise: Promise<import("near-api-js").FailoverRpcProvider> | undefined;
 let selectorPromise: Promise<WalletSelector> | undefined;
 let modalPromise: { show: () => void } | undefined;
 
@@ -127,6 +129,7 @@ async function getSelector(): Promise<WalletSelector> {
   ]).then(([core, myNearWallet]) =>
     core.setupWalletSelector({
       network,
+      fallbackRpcUrls: rpcUrls,
       modules: [myNearWallet.setupMyNearWallet()],
       createAccessKeyFor: {
         contractId,
@@ -179,7 +182,9 @@ export function gasForNearMethod(method: string): bigint {
 }
 
 function nearProvider() {
-  providerPromise ??= import("near-api-js").then(({ JsonRpcProvider }) => new JsonRpcProvider({ url: rpcUrl }));
+  providerPromise ??= import("near-api-js").then(({ FailoverRpcProvider, JsonRpcProvider }) =>
+    new FailoverRpcProvider(rpcUrls.map((url) => new JsonRpcProvider({ url }))),
+  );
   return providerPromise;
 }
 

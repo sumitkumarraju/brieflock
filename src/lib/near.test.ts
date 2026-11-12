@@ -5,6 +5,7 @@ import {
   gasForNearMethod,
   getExplorerTransactionUrl,
   nearRuntime,
+  verifyNearAccount,
   parseNearToYocto,
 } from "./near";
 import { createInitialCommission } from "./demoState";
@@ -15,6 +16,10 @@ describe("NEAR runtime helpers", () => {
     expect(nearRuntime.network).toBe("testnet");
     expect(nearRuntime.contractId).toBe("");
     expect(nearRuntime.milestoneId).toBe("kanso-001");
+  });
+
+  it("reports a mainnet wallet used on the testnet build before asking for a signature", async () => {
+    await expect(verifyNearAccount("reviewer.near")).rejects.toThrow("Select a testnet account");
   });
 
   it("builds a network-specific explorer link from an actual transaction hash", () => {
