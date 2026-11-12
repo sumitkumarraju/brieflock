@@ -910,16 +910,16 @@ function App() {
         </div>
 
         <div className="sidebar-bottom">
-          <div className="side-contract-card">
-            <div className="side-contract-top"><span>Demo commission</span><span className="mono">{commission.id}</span></div>
-            <div className="side-contract-title">Kanso Coffee</div>
+          {(!liveConfigured || liveStateStatus === "available") && <div className="side-contract-card">
+            <div className="side-contract-top"><span>{liveConfigured ? "Testnet milestone" : "Demo commission"}</span><span className="mono">{commission.id}</span></div>
+            <div className="side-contract-title">{liveConfigured ? commission.title : "Kanso Coffee"}</div>
             <StatusPill status={commission.status} />
             <div className="side-contract-meta"><span>Principal</span><strong>{commission.amountNear} NEAR</strong></div>
-          </div>
+          </div>}
           <div className="user-row">
             <div className="avatar">SK</div>
-            <div className="user-copy"><strong>Builder workspace</strong><span>local operator</span></div>
-            <button className="icon-button"><RefreshCw size={15} /></button>
+            <div className="user-copy"><strong>Builder workspace</strong><span>{liveConfigured ? (nearAccount ?? "Read-only") : "local operator"}</span></div>
+            {liveConfigured && <button className="icon-button" aria-label="Refresh chain state" disabled={nearBusy} onClick={() => void syncLiveState()}><RefreshCw size={15} /></button>}
           </div>
         </div>
       </aside>
