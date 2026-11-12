@@ -13,14 +13,14 @@ npm ci
 
 ## 2. Build and deploy
 
-Create or use a testnet account you control, then run:
+Use a dedicated testnet account with its key imported into NEAR CLI-RS, then run:
 
 ```sh
 npm run build:contract
 ./scripts/deploy-testnet.sh your-contract.testnet
 ```
 
-The helper refuses non-`.testnet` accounts and initializes the contract with `new` after deployment. Deployment authority remains with the account owner; the contract is not immutable merely because it is deployed.
+The helper selects the testnet network explicitly and deploys and initializes the contract with `new` in one transaction. Use it for a fresh contract account. Deployment authority remains with the account owner; the contract is not immutable merely because it is deployed.
 
 ## 3. Configure the browser
 
@@ -52,8 +52,8 @@ After funding, share the dashboard URL containing `?milestone=<id>` with the cre
 ## 4. Direct read-only verification
 
 ```sh
-near view your-contract.testnet get_config '{}'
-near view your-contract.testnet get_milestone '{"milestone_id":"kanso-001"}'
+near view your-contract.testnet get_config '{}' --networkId testnet
+near view your-contract.testnet get_milestone '{"milestone_id":"kanso-001"}' --networkId testnet
 ```
 
 If the browser says a wallet flow opened without a returned outcome, do not replay a financial operation blindly. Wait for the wallet redirect/finalization, then refresh the dashboard and inspect the canonical state.

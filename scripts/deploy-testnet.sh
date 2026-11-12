@@ -24,6 +24,9 @@ if [ ! -f "$WASM" ]; then
   exit 1
 fi
 
-near deploy "$CONTRACT_ID" "$WASM"
-near call "$CONTRACT_ID" new '{}' --useAccount "$CONTRACT_ID"
-echo "Deployed and initialized $CONTRACT_ID on the configured NEAR CLI network."
+near contract deploy "$CONTRACT_ID" \
+  use-file "$WASM" \
+  with-init-call new json-args '{}' \
+  prepaid-gas '100 Tgas' attached-deposit '0 NEAR' \
+  network-config testnet sign-with-keychain send
+echo "Deployed and initialized $CONTRACT_ID on NEAR testnet."
